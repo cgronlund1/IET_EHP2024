@@ -1,0 +1,246 @@
+---
+title: "Modeling Indoor Heat Health Impact Step 2 Aggregate IET by Day"
+author: "Carina Gronlund"
+date: "March 3, 2021"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, cache=F, results='show')
+```
+
+##IET Inputs for Step 3a: `r city`
+
+First, import the data sets created by Dave. Per Dave, each of the file represents a five-day period, one during the heat wave (YesHW), and one after (NoHW), for each city. In each file, there are rows for each synthetic resident and 120 columns, one per each hour of the five-day period.
+
+Find which days are the YesHW and NoHW days from the hw.periods file.
+```{r, results='show'}
+v1<-min(hw.periods[City==cy & Period=='1980 - 2010 (ECMWF)' & heatwave=='post',date]) #the day after the heatwave
+dates<-hw.periods[City==cy & Period=='1980 - 2010 (ECMWF)' & (hottest.5.days.GCM==T | date>v1),date]
+print(dates)
+```
+
+In the following code, the files are first downloaded manually from OneDrive.
+```{r}
+v1<-sprintf('%02.f',c(4:23,0:3))
+dat1<-fread(paste0(pa2,fs1[1]))
+#rename columns
+v2<-paste(rep(dates[1:5],each=24),rep(v1,5),sep='.')
+names(dat1)<-v2
+#save as smaller file by converting degrees F to tenths of degrees F and converting to integer
+dat1[,(v2):=lapply(.SD,function(x) {as.integer(x*10)})]
+
+dat1a<-fread(paste0(pa2,fs1[2]))
+#rename columns
+v3<-paste(rep(dates[6:10],each=24),rep(v1,5),sep='.')
+names(dat1a)<-v3
+#save as smaller file by converting degrees F to tenths of degrees F and converting to integer
+dat1a[,(v3):=lapply(.SD,function(x) {as.integer(x*10)})]
+rm(dates,v1,v2,v3)
+```
+
+For step 3a, incorporate the synthetic population dataset race and age information and merge it with the IET data.
+```{r}
+dat7<-fread(paste0(pa2,grep(cy,c(fi3,fi4,fi5),value=T)))
+v1<-names(dat7)[names(dat7) %in% c('PERSON_ID','HH_RACE','RACE','AGE','SEX','AC_STATUS','EP_CLASS','HH_INCOME','OCC')]
+dat1<-cbind(dat1,dat7[,..v1])
+dat1a<-cbind(dat1a,dat7[,..v1])
+rm(v1)
+```
+
+For step 3a, look at temperature descriptives, first averaged by ID.
+```{r, echo=F}
+cat('Heat-Wave Period \n')
+v1<-grep('[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}',names(dat1))
+summary(rowMeans(dat1[,.SD,.SDcols=v1])/10)
+cat('Post-Heat-Wave Period \n')
+v2<-grep('[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}',names(dat1a))
+summary(rowMeans(dat1a[,.SD,.SDcols=v2])/10)
+rm(v1,v2)
+```
+
+After importing the files, reshape them so that they're long.
+```{r}
+v1<-names(dat1)[names(dat1) %in% c('PERSON_ID','HH_RACE','RACE','AGE','SEX','AC_STATUS','EP_CLASS','HH_INCOME','OCC')]
+v2<-grep('[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}',names(dat1))
+dat2<-melt(dat1,id.vars=v1,measure = v2,variable.name='dateTime',value.name='IET')
+
+v1<-names(dat1a)[names(dat1a) %in% c('PERSON_ID','HH_RACE','RACE','AGE','SEX','AC_STATUS','EP_CLASS','HH_INCOME','OCC')]
+v2<-grep('[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}',names(dat1a))
+dat3<-melt(dat1a,id.vars=v1,measure = v2,variable.name='dateTime',value.name='IET')
+```
+
+For step 3a, look at overall descriptives across hourly IETs.
+```{r, echo=F}
+cat('Heat-Wave Period \n', summary(dat2[,'IET']/10))
+cat('Post-Heat-Wave Period \n', summary(dat3[,'IET']/10))
+```
+
+Then find the min, max, and mean IET by date and ID. Also, per Dave, the time activity data was 4 am to 4 am, and it was easier to consider a 24-hour period in that range than to go midnight to midnight.
+```{r}
+dat2[,date:=substr(dateTime,1,10)]
+v1<-names(dat2)[names(dat2) %in% c('PERSON_ID','HH_RACE','RACE','AGE','SEX','AC_STATUS','EP_CLASS','HH_INCOME','OCC')]
+dat2<-dat2[,.(IET.mean=mean(IET), IET.min=min(IET), IET.max=max(IET)), by=c('date',v1)]
+dat2[,AGE65UP:=AGE>=65]
+
+dat3[,date:=substr(dateTime,1,10)]
+v1<-names(dat3)[names(dat3) %in% c('PERSON_ID','HH_RACE','RACE','AGE','SEX','AC_STATUS','EP_CLASS','HH_INCOME','OCC')]
+dat3<-dat3[,.(IET.mean=mean(IET), IET.min=min(IET), IET.max=max(IET)), by=c('date',v1)]
+dat3[,AGE65UP:=AGE>=65]
+```
+
+Statistics on the daily mean statistics were calculated on the hourly values by ID. Additionally, demographic descriptives are calculated, and IET by demographic characteristics are calculated. These were evaluated as sanity checks but neither the code nor the results are shown here in the interests of space.
+
+Per Evan, "hh_race comes from the synthetic population data (which comes from PUMS), and is coded the same as the variable RAC1P:
+Recoded detailed race code 1=White alone 2=Black or African American alone 3=American Indian alone 4=Alaska Native alone 5=American Indian and Alaska Native tribes specified; or American Indian or Alaska Native, not specified and no other races 6=Asian alone 7=Native Hawaiian and Other Pacific Islander alone 8=Some Other Race alone 9=Two or More Race." Evan also indicated that the base data set did not include information on Hispanic ethnicity.
+```{r, results='hide', eval=F, echo=F}
+cat('Demographic Statistics \n')
+summary(dat2[,c('AGE','AGE65UP')])
+v1<-c(grep('RACE',names(dat2),fixed=T,value=T),grep('HH_RACE',names(dat2),fixed=T,value=T))[1]
+dat2[,.N,by=v1]
+dat2[,.N,by='SEX']
+```
+
+Heat-Wave Period: Daily temperature statistics calculated first by date and ID and then on resulting values
+```{r, results='hide', eval=F, echo=F}
+print(dat2[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=.(date)])
+```
+
+
+All Person-Days
+```{r, results='hide', eval=F, echo=F}
+print(dat2[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10)])
+```
+
+By Race
+```{r, results='hide', eval=F, echo=F}
+v1<-c(grep('RACE',names(dat2),fixed=T,value=T),grep('HH_RACE',names(dat2),fixed=T,value=T))[1]
+print(dat2[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=v1])
+```
+
+By Age
+```{r, results='hide', eval=F, echo=F}
+print(dat2[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=.(AGE65UP)])
+```
+
+By Sex
+```{r, results='hide', eval=F, echo=F}
+print(dat2[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=.(SEX)])
+```
+
+Non-Heat-Wave Period: Daily temperature statistics calculated first by date and ID and then on resulting values
+```{r, results='hide', eval=F, echo=F}
+print(dat3[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=.(date)])
+```
+
+All Person-Days
+```{r, results='hide', eval=F, echo=F}
+print(dat3[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10)])
+```
+
+By Race
+```{r, results='hide', eval=F, echo=F}
+v1<-c(grep('RACE',names(dat2),fixed=T,value=T),grep('HH_RACE',names(dat2),fixed=T,value=T))[1]
+print(dat3[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=v1])
+```
+
+By Age
+```{r, results='hide', eval=F, echo=F}
+print(dat3[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=.(AGE65UP)])
+```
+
+By Sex
+```{r, results='hide', eval=F, echo=F}
+print(dat3[,.(mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=.(SEX)])
+```
+
+
+Next, stack the two step 3a files for step 3a.
+```{r, results='show'}
+dat4<-rbind(dat2,dat3)
+#v7<-c('IET.mean','IET.min','IET.max')
+#dat4[,(v7):=lapply(.SD,FUN=function(x) {(x/10-32)/1.8}),.SDcols=v7]
+```
+
+Save the demographic characteristics in RData form and the two sets of IETs.
+```{r}
+v1<-paste0('demographics.',cy)
+assign(v1,dat7)
+save(list=v1,file=paste0(pa2,'demographics_',cy,'.RData'))
+v2<-paste0('IET.personday.',fs2[1])
+assign(v2,dat2)
+save(list=v2,file=paste0(pa2,fs2[1],'.RData'))
+v3<-paste0('IET.personday.',fs2[2])
+assign(v3,dat3)
+save(list=v3,file=paste0(pa2,fs2[2],'.RData'))
+```
+
+Examine descriptives by housing type.
+```{r, results='show'}
+print(dat4[EP_CLASS!='MF_06SE',.(n.person.days=sum(!is.na(IET.mean)),mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=.(EP_CLASS)])
+```
+
+Examine descriptives by AC status.
+```{r, results='show'}
+print(dat4[,.(n.person.days=sum(!is.na(IET.mean)),mean.IET.mean=mean(IET.mean,na.rm=T)/10,max.IET.mean=max(IET.mean,na.rm=T)/10,min.IET.mean=min(IET.mean,na.rm=T)/10,  min.IET.min=min(IET.min,na.rm=T)/10, max.IET.max=max(IET.max,na.rm=T)/10),by=.(AC_STATUS)])
+```
+
+Examine histograms by date.
+```{r}
+v1<-unique(dat4$date)
+v11<-c(3e+05,3e+05,7e+05)[match(cy,abbrcity)]
+par(mfrow=c(3,4),mar=c(2,2,0,0))
+for (i in v1) {
+  v2<-round(APT.daily[[cy]][date==i,'tempC_mean'],1)
+  v2a<-round(APT.daily[[cy]][date==i,'tempC_min'],1)
+  v2b<-round(APT.daily[[cy]][date==i,'tempC_max'],1)
+  v3<-round((mean(dat4[date==i,IET.mean],na.rm=T)/10-32)/1.8,1)
+  v5a<-floor((min(dat4[date==i,IET.mean])/10-32)/1.8)
+  v5b<-ceiling((max(dat4[date==i,IET.mean])/10-32)/1.8)
+  if (cy!='PHX') {v8<-v5a:v5b; v4<-dpois(v8-v5a,lambda=v3-v5a)}
+  if (cy=='PHX') {v8<-21:ceiling(as.numeric(v2b)); v4<-dpois(v8-21,lambda=v3-21)}
+    hist(round((dat4[date==i,IET.mean]/10-32)/1.8,0),main='',xlab='',ylim=c(0,v11),breaks=v8)
+  text(v5b,3e+05,paste(i,'\n Mean AP Temp',v2,'C \n Mean IET Temp',v3,'C \n Min AP',v2a,'C \n Max AP',v2b,'C '),adj=c(1,1))
+  lines(x=v8+0.5,y=v4*nrow(dat4)/10,col='red')
+}
+plot(0,type='n',axes=FALSE,ann=FALSE)
+#legend('topleft',legend=c('Poisson','Gamma','Beta'),lty=1,col=c('red','green','blue'),bty='n',xpd=T)
+rm(list=grep('^v[[:digit:]][[:alnum:]]{0,1}$',ls(),value=T),i)
+```
+
+The data are actually underdispersed poisson distributions. It looks like a higher than Poisson number of residents have IETs in a very narrow range around 75 F, which makese sense, because this is probably the range of temperatures that people set their thermostats at. What if we just consider IETs above the MMT in Gasparrini et al. 2015? We wouldn't expect heat-associated mortality to afflict people with IETs less than the MMT.
+```{r}
+v1<-unique(dat4$date)
+par(mfrow=c(3,4),mar=c(2,2,0,0))
+v10<-c(25.6,23.9,29.2)[match(cy,abbrcity)] #pick city-specific MMT from Gasparrini et al. 2015
+for (i in v1) {
+  k1<-floor((min(dat4[date==i & (IET.mean/10-32)/1.8>=v10,IET.mean],na.rm=T)/10-32)/1.8*1)/1
+  k2<-ceiling((max(dat4[date==i & (IET.mean/10-32)>=v10,IET.mean],na.rm=T)/10-32)/1.8*1)/1
+  if (k2-k1 <= 1) next
+  test<-hist((dat4[date==i & (IET.mean/10-32)/1.8>=v10,IET.mean]/10-32)/1.8,breaks=seq(k1,k2),plot=F)  
+  v2<-as.numeric(round(APT.daily[[cy]][date==i,'tempC_mean'],1))
+  v3<-round(mean(dat4[date==i  & (IET.mean/10-32)/1.8>=v10,(IET.mean/10-32)/1.8],na.rm=T),1)
+  v4<-sum(test$counts)
+  v6<-dpois((seq(k1,k2,by=1)-k1)*1,lambda=v3-k1)*v4
+  v8<-max(c(test$counts,v6))
+  v9<-seq(k1,max(k2,v2),by=1)+0.5
+  plot(test,main='',xlab='',ylim=c(0,v8),xlim=c(k1,k2))
+  text(k2,v8,paste(i,'\n Mean AP temp',v2,'F \n Mean IET',v3,'F '),adj=c(1,1))
+  lines(x=v9,y=v6,col='red') #this shifts the Poisson distribution to line up with the histogram bars (+0.25)
+  }
+plot(0,type='n',axes=FALSE,ann=FALSE)
+rm(test,i,k1,k2,list=grep('^v[[:digit:]][[:alnum:]]{0,1}$',ls(),value=T))
+```
+
+On heat wave days, these are not Poisson distributions, perhaps reflecting differing temperatures depending on whether individuals work outside or not and have AC or not. Therefore, we need to use a more complex IET-to-APT modeling than simply assuming that a distribution of IETs with one or two parameters can accurately map onto an APT distribution.
+
+Look at number of individuals with IET.mean > MMT by date.
+```{r, results='show'}
+v10<-c(25.6,23.9,29.2)[match(cy,abbrcity)]
+dat4[(IET.mean/10-32)/1.8>=v10,.N,by=date]
+```
+

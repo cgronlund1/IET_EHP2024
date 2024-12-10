@@ -1,0 +1,438 @@
+---
+title: "Step 0 Introduction"
+author: "Carina Gronlund"
+date: "2024-12-06"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r chunk-setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, results='hide',cache=F)
+```
+
+Ovals are data sets and boxes are processes. Red indicates a data set created outside of the following programs. IET = individually experienced temperature, APT = airport temperature (from NOAA) or analog temperature, contemp = contemporary, HIF = health impact function, lit = literature, RR = risk ratio, AF = attributable fraction. "Sc"" indexes scenarios and "cy"" indexes cities. Sometimes a step produces one file, sometimes it produces one file for each scenario, and sometimes it produces a file for each scenario and city combination.
+
+We will perform this process for deaths, ED visits, and preterm birth for 30 scenarios for each of the three cities.
+
+Throughout these programs, the following abbreviations and conventions are used:
+sc = scenario, cy = city abbrevation, cf = full city name, sc = scenario, contemp = contemporary scenario, i = person-day, j = age/race/sex group. At the end of each file name, a scenario and/or city are indicated if there is more than one file applicable to each scenario and/or city for that step. The smaller multi-city files are held in the master RData workspace "3HEAT_HI.RData" but many of the outputs are in separate RData workspaces as lists (containing data.tables) or as data.tables themselves.
+
+## Load necessary libraries and establish path names, program names, and file names.
+
+Libraries.
+```{r chunk-libs}
+library(DiagrammeR) #see https://rich-iannone.github.io/DiagrammeR/graphviz_and_mermaid.html
+library(data.table)
+library(rnoaa)
+library(curl)
+library(nlme)
+```
+
+Path names, program names, and file names used by all cities.
+```{r chunk-filenames}
+source('C:\\Users\\gronlund\\Dropbox (University of Michigan)\\DocumentsC\\NSF Hazards SEES Stone 2016\\Health Impact Function\\Programs\\paths_filenames.R')
+```
+
+# Introduction
+The 3HEAT project, funded by NSF, aims to estimate the mortality and morbidity associated with a heat wave concurrent with a blackout in Detroit, Phoenix, and Atlanta in future climate scenarios. We will take the following general approach in estimating these effects.
+
+```{r chunk-intro, results='show'}
+grViz("digraph flowchart {
+  #graph statement
+  graph [overlap = T, fontsize = 10]
+
+  #process node definitions with substituted label text
+  node [fontname = Arial, shape = rectangle]        
+  r1 [label = '1. Aggregate contemporary hourly OAT by day']
+  r2 [label = '2. Aggregate hourly IET by person-day \n']
+  r3a [label = '3a. For contemporary power-on scenarios only, merge by day and regress IET \n on OAT with interaction terms for demographics and housing to get predicted \n IET values for any given OAT, demographics, and housing and predicted IET at the MMT for each study']
+  r3b [label = '3b. Rearrange regression equation and estimate \n predicted OAT for every given IET and person']
+  r4 [label = '4. Define RR for each excess OAT and study']
+  r5 [label = '5. Calculate excess predicted OAT and excess analog OAT \n and merge by excess OAT to assign predicted RR \n and analog RR to each person-day-study']
+  r6 [label = '6. Multiply AF by health counts to estimate heat-\n attributable health burden for each person-day-study']
+
+  #data set node definitions with substituted label text
+  node [fontname = Arial, shape = oval]        
+  c1a [label = 'OAT.hourly.present.city' color=Red]
+  c2a [label = 'IET.personhour.scen.city' color=Red]
+  c1b [label = 'OAT.daily.present.city']
+  c2b [label = 'IET.personday.scen.city']
+  c3a1 [label = 'IETp.models.city']
+  c3a2 [label = 'IETp.MMT.models.city']
+  c3b [label = 'OATp.IETp.scen.city']
+  c4a [label = 'HIF.lit' color=Red]
+  c4b [label = 'RR.OATp.city']
+  c51 [label = 'RRp.IETp.scen.city']
+  c52 [label = 'RRa.IETp.scen.city']
+  c6a [label = 'health.counts.present.city' color=Red]
+  c6b1 [label = 'burden.RRp.scen.city']
+  c6b2 [label = 'burden.RRa.scen.city']
+
+  # edge definitions with the node IDs
+  c1a -> r1 -> c1b -> r3a -> c3a1 -> r3b
+  c3a1 -> r5
+  r3a -> c3a2 -> r5 -> c52 -> r6
+  c2a -> r2 -> c2b -> r3b -> c3b -> r5 -> c51 -> r6 -> c6b1
+  c2b -> r3a
+  c4a -> r4 -> c4b -> r5
+  c6a -> r6 -> c6b2
+  
+}
+  ")
+```
+
+For the main text of the paper, a simplified figure:
+
+
+```{r chunk intro2, results='show'}
+grViz("digraph flowchart {
+  #graph statements
+  graph [overlap = T, fontsize = 10]
+
+  #data set definitions with substituted label text
+  node [fontname = Arial, shape = rectangle]        
+  r1 [label = 'Indoor temp per\nbuilding-day']
+  r2 [label = 'Synthetic persons']
+  r3 [label = 'OAT per day']
+  r4 [label = 'Time activity patterns\nper person']
+  r5 [label = 'IET per person-day']
+  r6 [label = 'RR per OAT']
+  r7 [label = 'eOAT per person-day']
+  r8 [label = 'RR per person-day']
+  r9 [label = 'Mortality & morbidity risk\nper person-day']
+  r10 [label = 'Heat-associated\nmortality & morbidity risk\nper person-day']
+
+  # edge definitions with the node IDs
+  {r1 r2 r3 r4} -> r5 -> r7 -> r8 -> r10
+  r3 -> r7 
+  r6 -> r8
+  r9 -> r10
+  r3 -> r6 [style = invis]
+  r6 -> r9 [style = invis]
+  subgraph {
+  rank=same; r3; r5;
+  }
+}
+  ")
+```
+
+Load the master workspace if it exists.
+```{r chunk-load-master}
+load(paste0(pa2,fi2))
+```
+
+City abbreviations, city full names and scenario names.
+```{r chunk-city-abbr}
+fullcity<-c('Atlanta','Detroit','Phoenix')
+abbrcity<-c('ATL','DET','PHX')
+v1<-paste(rep(c('YesHW','NoHW'),each=3),rep(c('Control','Cool','Tree'),2),sep='_')
+v2<-paste(rep(c('Endofcentury','Midcentury','Present'),each=6),v1,sep='_')
+scenarios<-paste(rep(c('PowerOff','PowerOn','PowerRestore'),each=18),v2,sep='_')
+scenarios<-scenarios[!grepl('Midcentury_NoHW|Endofcentury_NoHW|NoHW_Cool|NoHW_Tree',scenarios)] #drop inapplicable scenarios
+rm(v1,v2)
+```
+
+Create the filenames for all the IET input scenario/city combinations for which we need runs. The file numbering starts at fs1 and goes up to fs90 for 90 scenario-city combinations. The Nov30 suffix refers to the date in 2020 that Dave repeated the runs.
+```{r chunk-hourly-files}
+x1<-0 #counter
+v2<-vector()
+for (sc in scenarios) {
+  for (cy in fullcity) {
+    x1<-x1+1
+    v1<-paste0('HourlyIETRun_',sc,'_',cy,'Nov30.csv')
+    v2[x1]<-v1
+  }
+}
+names(v2)<-paste0('fs',1:90)
+v3<-grepl('PowerOff',v2)
+v2[v3]<-gsub('Hourly','Houly',v2[v3]) #Dave mispelled hourly for some of these
+IET.input.filenames<-v2
+rm(v2,sc,cy,v1,v3,x1)
+```
+
+Identify the PowerOn_YesHW_Control and PowerOn_NowHW_Control contemporary scenario filenames. These are used in Step 3a.
+```{r chunk-special-files}
+IET.input.filenames.step3a<-IET.input.filenames[grepl('PowerOn_Present_YesHW_Control|PowerOn_Present_NoHW_Control',IET.input.filenames)]
+```
+
+Identify the other scenarios for step 3b.
+```{r chunk-other-files}
+IET.input.other.filenames<-IET.input.filenames[!(IET.input.filenames %in% IET.input.filenames.step3a)]
+```
+
+
+## Create functions.
+
+The Intraclass Correlation (ICC) function, from http://davidakenny.net/papers/k&h/MLM_R.pdf.
+"Multilevel Modeling in R, Using the nlme Package
+William T. Hoyt (University of Wisconsin-Madison)
+David A. Kenny (University of Connecticut)
+March 21, 2013
+Supplement to Kenny, D. A., & Hoyt, W. (2009) Multiple levels of analysis in
+psychotherapy research, Psychotherapy Research, 19, 462-468."
+
+See also https://www.ssc.wisc.edu/sscc/pubs/MM/MM_DiagInfer.html for a script for the lme4 package. "ICC is a measure of how much of the variation in the response variable, which is not attributed to fixed effects, is accounted for by a random effect. It is the ratio of the variance of the random effect to the total random variation.""
+```{r chunk-fxns1}
+ICC.fxn<-function(modx) {
+  varests <- as.numeric(VarCorr(modx)[1:2]) # vector of variance estimates
+varests[1]/sum(varests) # computes ICC
+}
+```
+
+Variable rescale functions for each city.
+
+To save space, these derived variables are not saved but derived each time they are needed. Hence, a function is created. The variables are all rescaled to ensure convergence in the models below. Rescale age and create a log-transformed quadratic age term to avoid collinearity with age. Rescale tempC_mean. Convert IET.mean (in tenths of degrees F) to Celsius and rescale. Create a log-transformed quadratic IET.mean. Note that log-transforming the quadratic terms brings them onto a similar scale as the mean-centered main term, thereby allowing the models to converge. Rescale income and log-transform. Rescale even the indicator variables so that the intercept is the mean value among all the participants in that subset data set.
+
+```{r chunk-fxns2b}
+varDeriv.fxn.ATL<-function(datx) {
+v1<-c('AGE','tempC_mean','IET.mean','SEX','HH_INCOME','OCC','GRID_2010_L2') #numeric
+v2<-c('AC_STATUS','EP_CLASS') #character
+v3<-v1[is.na(match(v1,names(datx)))]; datx[,(v3):=as.numeric(NA)] #create missing numeric variables and make NA
+v4<-v2[is.na(match(v2,names(datx)))]; datx[,(v4):=as.character(NA)] #create missing character variables and make NA
+datx[,ageS:=(AGE-35)/21] #mean=35.3 and SD=21.2.
+datx[,age2:=ageS^2] #mean=1, sd=1.2 but distribution skewed right
+datx[,APTmeanS:=(tempC_mean-28)/3] #mean=28.2 and SD=2.8
+datx[,IETmeanS:=(((IET.mean/10-32)/1.8)-25)/3] #mean=24.9 and SD=1.7
+datx[,lowAC:=as.numeric(AC_STATUS %in% c('NAC','PAC'))-0.04]
+datx[,lnIncomeS:=(log(HH_INCOME+84305+5000)-11.9)/0.5] #for HH_INCOME, min=-9999, mean=84,304 and SD=106,435. For lnIncome, mean=11.9 and sd=0.45
+datx[,lnIncome2:=lnIncomeS^2] #mean of lnIncomeS = 0.088, but correlation with lnIncomeS is down to 0.22 if we subtract the third quartile of lnIncomeS of 0.50.
+datx[,maleS:=as.numeric(SEX==1)-0.48]
+datx[,OCC2:=as.numeric(OCC==2)-0.105]
+datx[,OCC3:=as.numeric(OCC==3)-0.168]
+datx[,PAC:=as.numeric(AC_STATUS=='PAC')-0.034]
+datx[,NAC:=as.numeric(AC_STATUS=='NAC')-0.0076]
+datx[,MF_06N:=as.numeric(EP_CLASS=='MF_06N')-77342/388790]
+datx[,MF_06S:=as.numeric(EP_CLASS=='MF_06S')-84084/388790]
+datx[,MF_12N:=as.numeric(EP_CLASS=='MF_12N')-6367/388790]
+datx[,MF_12S:=as.numeric(EP_CLASS=='MF_12S')-6116/388790]
+datx[,SF2M:=as.numeric(EP_CLASS=='SF2M')-5012/388790]
+datx[,SF2M_B:=as.numeric(EP_CLASS=='SF2M_B')-7343/388790]
+datx[,SF2M_S:=as.numeric(EP_CLASS=='SF2M_S')-3205/388790]
+datx[,SF2M_SB:=as.numeric(EP_CLASS=='SF2M_SB')-13349/388790]
+datx[,SF2NM:=as.numeric(EP_CLASS=='SF2NM')-8661/388790]
+datx[,SF2NM_B:=as.numeric(EP_CLASS=='SF2NM_B')-6257/388790]
+datx[,SF2NM_S:=as.numeric(EP_CLASS=='SF2NM_S')-4715/388790]
+datx[,SF2NM_SB:=as.numeric(EP_CLASS=='SF2NM_SB')-5987/388790]
+datx[,SFM:=as.numeric(EP_CLASS=='SFM')-75852/388790]
+datx[,SFM_S:=as.numeric(EP_CLASS=='SFM_S')-21681/388790]
+datx[,SFNM:=as.numeric(EP_CLASS=='SFNM')-45229/388790]
+datx[,SFNM_S:=as.numeric(EP_CLASS=='SFNM_S')-17590/388790]
+datx[,MF:=as.numeric(substr(EP_CLASS,1,2)=='MF')-173909/388790]
+datx[,SF:=as.numeric(substr(EP_CLASS,1,2)=='SF')-214881/388790]
+datx[,grid2010L2S:=(GRID_2010_L2-77.7)/14.2]
+}
+```
+
+```{r}
+varDeriv.fxn2.ATL<-function(datx) {
+datx[,MF:=MF_06N+MF_06S+MF_12N+MF_12S]
+datx[,SF_S:=SFM_S + SFNM_S]
+datx[,SF:=SFM + SFNM]
+datx[,SF2_SB:=SF2M_SB + SF2NM_SB]
+datx[,SF2_B:=SF2M_B+SF2NM_B]
+datx[,SF2_S:=SF2M_S+SF2NM_S]
+datx[,SF2:=SF2M+SF2NM]
+datx[,male_OCC1:=(maleS>0 & OCC2<0 & OCC3<0)-116600/388790]
+datx[,male_OCC3:=(maleS>0 & OCC3>0)- 28544/388790]
+datx[,female_OCC3:=(maleS<0 & OCC3>0)-36718/388790]
+datx[,inclt15:=as.integer(HH_INCOME<15000)-65905/388790]
+datx[,inc15_30:=as.integer(HH_INCOME>=15000 & HH_INCOME<30000)-148330/388790]
+datx[,inc30_50:=as.integer(HH_INCOME>=30000 & HH_INCOME<50000)-82994/388790]
+datx[,inc50_75:=as.integer(HH_INCOME>=50000 & HH_INCOME<75000)-36948/388790]
+datx[,inc75up:=as.integer(HH_INCOME>=75000)-54613/388790]
+}
+```
+
+
+```{r chunk-fxns2c}
+varDeriv.fxn.DET<-function(datx) {
+v1<-c('AGE','tempC_mean','IET.mean','HH_INCOME','OCC','GRID_2010_L2') #numeric
+v2<-c('AC_STATUS','SEX','EP_CLASS') #character
+v3<-v1[is.na(match(v1,names(datx)))]; datx[,(v3):=as.numeric(NA)] #create missing numeric variables and make NA
+v4<-v2[is.na(match(v2,names(datx)))]; datx[,(v4):=as.character(NA)] #create missing character variables and make NA
+datx[,ageS:=(AGE-35)/21] #mean=35.0 and SD=22.9.
+datx[,age2:=ageS^2] #mean=1.19, sd=1.25 but distribution skewed right
+datx[,APTmeanS:=(tempC_mean-26)/4] #mean=25.9 and SD=3.9
+datx[,IETmeanS:=(((IET.mean/10-32)/1.8)-22)/4] #mean=22.3 and SD=3.8
+datx[,lowAC:=as.numeric(AC_STATUS %in% c('NAC','PAC'))-0.46]
+datx[,lnIncomeS:=(log(HH_INCOME+4200+5000)-10.6)/0.7] #for HH_INCOME, min=-4200, mean=40,655 and SD=40,741. For lnIncome, mean=10.6 and sd=0.71
+datx[,lnIncome2:=lnIncomeS^2] #mean = 1.02 and sd = 1.32, so no further standardization is done
+datx[,maleS:=as.numeric(SEX=='M')-0.46]
+datx[,OCC2:=as.numeric(OCC==2)-0.12]
+datx[,OCC3:=as.numeric(OCC==3)-0.19]
+datx[,PAC:=as.numeric(AC_STATUS=='PAC')-0.33]
+datx[,NAC:=as.numeric(AC_STATUS=='NAC')-0.12]
+datx[,MF_06N:=as.numeric(EP_CLASS=='MF_06N')-54425/697807]
+datx[,MF_06S:=as.numeric(EP_CLASS=='MF_06S')-57682/697807]
+datx[,MF_12N:=as.numeric(EP_CLASS=='MF_12N')-792/697807]
+datx[,MF_12S:=as.numeric(EP_CLASS=='MF_12S')-971/697807]
+datx[,SF2M:=as.numeric(EP_CLASS=='SF2M')-19780/697807]
+datx[,SF2M_B:=as.numeric(EP_CLASS=='SF2M_B')-91336/697807]
+datx[,SF2M_S:=as.numeric(EP_CLASS=='SF2M_S')-209/697807]
+datx[,SF2M_SB:=as.numeric(EP_CLASS=='SF2M_SB')-957/697807]
+datx[,SF2NM:=as.numeric(EP_CLASS=='SF2NM')-15710/697807]
+datx[,SF2NM_B:=as.numeric(EP_CLASS=='SF2NM_B')-70742/697807]
+datx[,SF2NM_S:=as.numeric(EP_CLASS=='SF2NM_S')-178/697807]
+datx[,SF2NM_SB:=as.numeric(EP_CLASS=='SF2NM_SB')-528/697807]
+datx[,SFM:=as.numeric(EP_CLASS=='SFM')-211132/697807]
+datx[,SFM_S:=as.numeric(EP_CLASS=='SFM_S')-2812/697807]
+datx[,SFNM:=as.numeric(EP_CLASS=='SFNM')-167963/697807]
+datx[,SFNM_S:=as.numeric(EP_CLASS=='SFNM_S')-2590/697807]
+datx[,MF:=as.numeric(substr(EP_CLASS,1,2)=='MF')-113870/697807]
+datx[,SF:=as.numeric(substr(EP_CLASS,1,2)=='SF')-583937/697807]
+datx[,grid2010L2S:=(GRID_2010_L2-77.7)/14.2]
+}
+```
+
+```{r chunk-fxns2c2}
+varDeriv.fxn2.DET<-function(datx) {
+datx[,SF_S:=SFM_S + SFNM_S]
+datx[,SF:=SFM + SFNM]
+datx[,SF2_S:=SF2M_S + SF2NM_S]
+datx[,SF2_SB:=SF2M_SB + SF2NM_SB]
+datx[,SF2:=SF2M + SF2NM]
+datx[,SF2_B:=SF2M_B+SF2NM_B]
+datx[,male_OCC1:=(maleS>0 & OCC2<0 & OCC3<0)-176816/697807]
+datx[,male_OCC3:=(maleS>0 & OCC3>0)-56740/697807]
+datx[,female_OCC3:=(maleS<0 & OCC3>0)-74612/697807]
+datx[,inclt15:=as.integer(HH_INCOME<15000)-185863/697807]
+datx[,inc15_30:=as.integer(HH_INCOME>=15000 & HH_INCOME<30000)-165786/697807]
+datx[,inc30_50:=as.integer(HH_INCOME>=30000 & HH_INCOME<50000)-144829/697807]
+datx[,inc50_75:=as.integer(HH_INCOME>=50000 & HH_INCOME<75000)-99724/697807]
+datx[,inc75up:=as.integer(HH_INCOME>=75000)-101605/697807]
+}
+```
+
+```{r chunk-fxns2a}
+varDeriv.fxn.PHX<-function(datx) {
+v1<-c('AGE','tempC_mean','IET.mean','HH_INCOME','OCC','GRID_2010_L2') #numeric
+v2<-c('AC_STATUS','SEX','EP_CLASS') #character
+v3<-v1[is.na(match(v1,names(datx)))]; datx[,(v3):=as.numeric(NA)] #create missing numeric variables and make NA
+v4<-v2[is.na(match(v2,names(datx)))]; datx[,(v4):=as.character(NA)] #create missing character variables and make NA
+datx[,ageS:=(AGE-33)/21] #mean=32.9 and SD=21.4.
+datx[,age2:=ageS^2] #mean=1, sd=1.2 but distribution skewed right
+datx[,APTmeanS:=(tempC_mean-35)/4] #mean=35.2 and SD=4.1
+datx[,IETmeanS:=(((IET.mean/10-32)/1.8)-25)/4] #mean=25.4 and SD=2.35, however it's useful to have this on the same scale as APTmeanS
+datx[,lowAC:=as.numeric(AC_STATUS %in% c('NAC','PAC'))]
+datx[,lnIncomeS:=(log(HH_INCOME+19998+5000)-11.25)/0.6] #for HH_INCOME, min=-19,998, mean=67,064 and SD=66,602.85. For lnIncome, mean=11.25 and sd=0.57
+datx[,lnIncome2:=lnIncomeS^2] #for HH_INCOME, min=-19,998, mean=67,064 and SD=66,602.85. For lnIncome, mean=11.25 and sd=0.57
+datx[,maleS:=as.numeric(SEX=='M')-0.5]
+datx[,OCC2:=as.numeric(OCC==2)-0.134]
+datx[,OCC3:=as.numeric(OCC==3)-0.166]
+datx[,PAC:=as.numeric(AC_STATUS=='PAC')-0.0016]
+datx[,NAC:=as.numeric(AC_STATUS=='NAC')-0.00022]
+datx[,MF_06N:=as.numeric(EP_CLASS=='MF_06N')-147821/1397872]
+datx[,MF_06S:=as.numeric(EP_CLASS=='MF_06S')-142450/1397872]
+datx[,MF_12N:=as.numeric(EP_CLASS=='MF_12N')-3472/1397872]
+datx[,MF_12S:=as.numeric(EP_CLASS=='MF_12S')-3095/1397872]
+datx[,SF2M:=as.numeric(EP_CLASS=='SF2M')-14029/1397872]
+datx[,SF2NM:=as.numeric(EP_CLASS=='SF2NM')-145405/1397872]
+datx[,SFM:=as.numeric(EP_CLASS=='SFM')-493543/1397872]
+datx[,SFNM:=as.numeric(EP_CLASS=='SFNM')-448057/1397872]
+datx[,MF:=as.numeric(substr(EP_CLASS,1,2)=='MF')-296838/1397872]
+datx[,SF:=as.numeric(substr(EP_CLASS,1,2)=='SF')-1101034/1397872]
+datx[,grid2010L2S:=(GRID_2010_L2-77.7)/14.2]
+}
+```
+
+```{r}
+varDeriv.fxn2.PHX<-function(datx) {
+datx[,SF:=SFM + SFNM]
+datx[,SF2:=SF2M + SF2NM]
+datx[,male_OCC1:=(maleS>0 & OCC2<0 & OCC3<0)-394119/1397872]
+datx[,male_OCC3:=(maleS>0 & OCC3>0)-112232/1397872]
+datx[,female_OCC3:=(maleS<0 & OCC3>0)-119926/1397872]
+datx[,lowACs:=lowAC-2529/1397872]
+datx[,inclt15:=(HH_INCOME<15000)-169499/1397872]
+datx[,inc15_30:=(HH_INCOME>=15000 & HH_INCOME<30000)-229640/1397872]
+datx[,inc30_50:=(HH_INCOME>=30000 & HH_INCOME<50000)-295485/1397872]
+datx[,inc50_75:=(HH_INCOME>=50000 & HH_INCOME<75000)-260411/1397872]
+}
+```
+
+
+Function for importing these CDC Wonder data sets.
+```{r chunk-cdc-import}
+cdcimp<-function(x, dropNArows=T) {
+dat1<-read.delim(x)
+v1<-grep('---',dat1$Notes)[1] #the last rows are just metadata
+dat1<-read.delim(x,nrows=v1-1,na.strings=c('Suppressed','\\(Other\\)','Not Applicable','Not Stated','NS',''))
+v4<-c('ageGrp10','raceGrp','Deaths','Population')
+if ('State.Code' %in% names(dat1)) {
+  if (dropNArows==T) {dat1<-dat1[!is.na(dat1$State.Code),]}
+  v4<-c(v4,'State.Code')}
+if ('County.Code' %in% names(dat1)) {
+  if (dropNArows==T) {dat1<-dat1[!is.na(dat1$County.Code),]}
+  dat1$State.Code<-as.integer(floor(dat1$County.Code/1000))
+  v4<-c(v4,'State.Code','County.Code')}
+if ('Gender.Code' %in% names (dat1)) {
+  if (dropNArows==T) {dat1<-dat1[!is.na(dat1$Gender),]}
+  dat1$Sex<-1-(-1)*as.numeric(dat1$Gender.Code=='F') #now M=1, F=2
+  v4<-c(v4,'Sex')}
+if ('Ten.Year.Age.Groups' %in% names(dat1)) {
+  if (dropNArows==T) {dat1<-dat1[!is.na(dat1$Ten.Year.Age.Groups),]}
+  v1<-gsub('85\\+','85-120',dat1$Ten.Year.Age.Groups.Code)
+  v1<-gsub('^1$','0-0',v1)
+  v2<-unlist(lapply(v1,FUN=function(x) strsplit(x,'-')[[1]][1]))
+  v3<-unlist(lapply(v1,FUN=function(x) strsplit(x,'-')[[1]][2]))
+  dat1$ageGrp10<-paste0(v2,'_',v3)}
+if ('Race' %in% names(dat1)) {
+  if (dropNArows==T) {dat1<-dat1[!is.na(dat1$Race),]}
+  dat1$raceGrp[dat1$Race=='White']<-1L
+  dat1$raceGrp[dat1$Race=='Black or African American']<-2L
+  dat1$raceGrp[dat1$Race=='American Indian or Alaska Native']<-345L
+  dat1$raceGrp[dat1$Race=='Asian or Pacific Islander']<-67L
+  } else dat1$raceGrp<-89L
+dat1[,v4]
+}
+```
+
+Function for importing and processing demographics and then removing the large imported file.
+```{r chunk-demo-fxn}
+importDemos<-function(x) {
+  v1<-grep(x,c(fi6,fi7,fi8),value=T)
+  load(paste0(pa2,v1))
+  demos<-get(paste0('demographics.',x))
+  if (!('RACE' %in% names(demos))) {demos[,RACE:=HH_RACE]}
+    #ageGrp10 assignment
+    demos[AGE>0,ageGrp10:=paste0(floor((AGE+5)/10)*10-5*(AGE>4),'_',ceiling((AGE+6)/10)*10-6)][AGE==0,ageGrp10:='0_0'][AGE>=85,ageGrp10:='85_120']
+    demos[,ageGrp10:=gsub('0_4','1_4',ageGrp10)]
+    #ageGrp6 assignment
+    demos[AGE==0,ageGrp6:=c('<1')][AGE >=1 & AGE < 18,ageGrp6:='1-17'][AGE>=18 & AGE<45,ageGrp6:='18-44'][AGE>=45 & AGE<65,ageGrp6:='45-64'][AGE >= 65 & AGE<85,ageGrp6:='65-84'][AGE>=85,ageGrp6:='85+']
+    #ageGrp1 assignment
+    demos[AGE>=15 & AGE < 45,ageGrp1:='15-44'][AGE < 15 | AGE>= 45,ageGrp1:='other']
+    #race assignment
+  if ('RACE' %in% names(demos)) {demos[,race:=RACE]
+  } else demos[,race:=HH_RACE]
+  #raceGrp assignment
+  demos[race %in% c(1L,2L),raceGrp:=race][race %in% c(3L,4L,5L), raceGrp:=345L][race %in% c(6L,7L),raceGrp:=67L][race %in% c(8L,9L),raceGrp:=89L]
+  #sex assignment
+  demos[SEX %in% c(1,'M'), Sex:=1][SEX %in% c(2,'F'), Sex:=2][,SEX:=NULL]
+  rm(list=paste0('demographics.',x))
+  demos
+}
+```
+
+Function for de-meaning variables for fixed effects analyses. This only works if the interactions are only of the time-varying with non-time-varying variables. We use this instead of the plm function in the plm package, because the plm function doesn't appear to use the data.table optimizations and takes over three hours to run. This function was run and spot-checked on a subset of the Phoenix data.
+```{r}
+demean.fxn<-function(data=NULL,outcome=NULL,time.varying=NULL,non.time.varying=NULL) {
+  dat1<-setDT(data)
+  for (v1 in time.varying) {
+    v2<-paste0(v1,':',non.time.varying) #the new variables
+    dat1[,(v2):=lapply(.SD,FUN=function(x) {(get(v1)-mean(get(v1)))*x}),by=PERSON_ID,.SDcols=non.time.varying]
+    dat1[,(v1):=get(v1)-mean(get(v1))]
+  }
+  v3<-outcome
+  dat1[,(v3):=get(v3)-mean(get(v3)),by=PERSON_ID]
+  dat1
+}
+```
+
+
+Save the master workspace.
+```{r chunk-save-master, eval=FALSE}
+#save.image(paste0(pa2,fi2))
+```

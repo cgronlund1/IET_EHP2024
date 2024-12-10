@@ -1,0 +1,180 @@
+---
+title: "Modeling Indoor Heat Health Impact Step 1 Contemporary Airport Temperatures"
+author: "Carina Gronlund"
+date: "March 3, 2021"
+output:
+  html_notebook:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r chunk-setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, results='hide',cache=F)
+```
+
+##Load necessary libraries and establish path names, program names, and file names.
+
+Libraries.
+```{r chunk-libs}
+library(DiagrammeR) #see https://rich-iannone.github.io/DiagrammeR/graphviz_and_mermaid.html
+library(data.table)
+library(rnoaa)
+library(curl)
+library(nlme)
+```
+
+Path names, program names, and file names used by all cities.
+```{r chunk-filenames}
+source('C:\\Users\\gronlund\\Box Sync\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R')
+```
+
+Load the master workspace if it exists.
+```{r chunk-load-master}
+load(paste0(pa2,fi2))
+```
+
+#Step 1: Aggregate Hourly Airport Temperatures by Day
+We calculate daily minimum, maximum, mean, and apparent temperature values for DTW, PHX, and ATL--airports which are commonly used in the studies of temperature and health effects.
+
+##3HEAT heat wave periods
+Import a modified (long vs. wide) version of Ashley Broadbent's file indicating the heat-wave and non-heat-wave days in each city in each of the four climate periods.
+```{r chunk-1.1}
+hw.periods<-fread(paste0(pa1,fi1),stringsAsFactors=F,colClasses=c('character','character','character','logical','character','numeric'))
+hw.periods[,date:=as.Date(hw.periods$date,format='%m/%d/%Y')]
+```
+
+Find the days that are identified in the contemporary period, 1981-2010, for each city.
+```{r chunk-1.2}
+years.contemp<-unique(hw.periods[Period=='1980 - 2010 (ECMWF)',as.POSIXlt(date)$year+1900,by='City'])
+```
+
+##DTW, PHX, and ATL airport weather data for the relevant periods
+Using the rnoaa package, pull out the hourly values from the ISD data set. Note that although Detroit City Airport meets the criteria, it's usually DTW that was used in the prior epidemiologic studies of heat and health, so we drop Detroit City Airport.
+```{r chunk-1.3}
+st<-isd_stations()
+st<-st[grepl('PHOENIX|ATLANTA|DETROIT',st$station_name) &!grepl('DETROIT CITY AIRPORT',st$station_name) & st$begin<19800501 & st$end>20100901,]
+st$City<-c('PHX','ATL','DET')[unlist(lapply(c('PHOENIX','ATLANTA','DETROIT'),grep,st$station_name))] #assign city IDs
+st$year<-years.contemp$V1[match(years.contemp$City,st$City)] #assign the year of the contemporary period heat wave to each city
+st$tz<-'America/New_York'; st$tz[st$state=='AZ']<-'America/Phoenix'
+ls1<-lapply(1:nrow(st),FUN=function(x) {
+  isd(usaf=st$usaf[x],wban=st$wban[x],year=st$year[x])[,c('usaf_station','wban_station','date','time','temperature','temperature_dewpoint')]
+})
+```
+
+Here are the stations we extracted data for.
+```{r  chunk-1.4, results='show', eval=T, echo=F}
+st
+```
+
+Next, convert the ISD data to the appropriate time zone, calculate apparent temperature, and drop rows missing tempC.
+```{r chunk-1.5}
+ls1<-lapply(1:nrow(st),FUN=function(x) {
+  ls1[[x]]$DateTimeForm<-as.POSIXct(paste0(ls1[[x]]$date,ls1[[x]]$time),format='%Y%m%d%H%M',tz='GMT')
+  attributes(ls1[[x]]$DateTimeForm)$tzone<-st$tz[x]
+  ls1[[x]]$tempC<-as.numeric(ls1[[x]]$temperature)/10
+  ls1[[x]]$dewptC<-as.numeric(ls1[[x]]$temperature_dewpoint)/10
+  ls1[[x]]$tempC[ls1[[x]]$tempC==999.9]<-NA
+  ls1[[x]]$dewptC[ls1[[x]]$dewptC==999.9]<-NA
+  ls1[[x]]$apparentTempC<--2.653 + (0.994*ls1[[x]]$tempC) + (0.0153*(ls1[[x]]$dewptC)^2)
+  ls1[[x]][!is.na(ls1[[x]]$tempC),]
+})
+names(ls1)<-st$City
+```
+
+Next, pick the values so that there is a value on the hour for each hour, picking for that hour the value closest to it in time. Note that none of the values are more than 2 hours apart, even though there are missings in each data set.
+```{r chunk-1.6}
+ls2<-lapply(1:nrow(st),FUN=function(x) {
+    v1<-as.POSIXct(seq(0,365*24*3600,by=3600),origin=paste0(st$year[x],'-01-01'))
+    v2<-diff(ls1[[x]]$DateTimeForm)
+    cat(st$City[x],'Max time difference',max(v2),attributes(v2)$units,'\n') #the first element is the different between 2nd and 1st elements, etc.
+    dat1<-as.data.frame(do.call(cbind,approx(ls1[[x]]$DateTimeForm,ls1[[x]]$apparentTempC,xout=v1,method='constant',ties='mean')))
+    dat1$DateTimeForm<-as.POSIXct(dat1$x,origin='1970-01-01')
+    dat2<-as.data.frame(do.call(cbind,approx(ls1[[x]]$DateTimeForm,ls1[[x]]$tempC,xout=v1,method='constant',ties='mean')))
+    data.frame(DateTimeForm=dat1[,'DateTimeForm'],apparentTempC=dat1$y,tempC=dat2$y)
+})
+names(ls2)<-st$City
+```
+
+Next, find the daily means, maximums, and minimums of tempC and apparentTempC and replace the value with NA if there are fewer than 18 of 24 values.
+```{r chunk-1.7}
+APT.daily<-lapply(names(ls2),FUN=function(x) {
+  dat1<-setDT(ls2[[x]])[ ,lapply(.SD,FUN=function(x) {
+    c(mean(x),min(x),max(x),sum(!is.na(x)))}),by=(date=as.Date(ls2[[x]]$DateTimeForm)),.SDcols=c('apparentTempC','tempC')]
+  dat1[,stat:=rep(c('mean','min','max','N'),366)]
+  dat2<-dcast(dat1, date ~ stat, value.var = c('apparentTempC','tempC'))
+  dat2[apparentTempC_N<18,c('apparentTempC_max', 'apparentTempC_mean', 'apparentTempC_min'):=NA]
+  dat2[tempC_N<18,c('tempC_max','tempC_mean','tempC_min'):=NA]
+  dat2
+  })
+names(APT.daily)<-names(ls2)
+```
+
+Additionally, identify the 99th, 95th and 50th percentiles of mean daily temperature for the Sun PTB paper (1989-2002) and Nordio paper (2000-2006).
+
+First, pull in the data and convert to daily values as above.
+```{r chunk-2.0}
+ls1<-lapply(1:nrow(st),FUN=function(y) {
+do.call(rbind,lapply(1981:2010,FUN=function(x) {
+  dat1<-isd(usaf=st$usaf[y],wban=st$wban[y],year=x)[,c('usaf_station','wban_station','date','time','temperature','temperature_dewpoint')]
+  dat1$DateTimeForm<-as.POSIXct(paste0(dat1$date,dat1$time),format='%Y%m%d%H%M',tz='GMT')
+  attributes(dat1$DateTimeForm)$tzone<-st$tz[y]
+  dat1$tempC<-as.numeric(dat1$temperature)/10
+  dat1$dewptC<-as.numeric(dat1$temperature_dewpoint)/10
+  dat1$tempC[dat1$tempC==999.9]<-NA
+  dat1$dewptC[dat1$dewptC==999.9]<-NA
+  dat1$apparentTempC<--2.653 + (0.994*dat1$tempC) + (0.0153*(dat1$dewptC)^2)
+  dat1<-dat1[!is.na(dat1$tempC),]
+  v1<-as.POSIXct(seq(0,365*24*3600,by=3600),origin=paste0(x,'-01-01'))
+  dat2<-as.data.frame(do.call(cbind,approx(dat1$DateTimeForm,dat1$tempC,xout=v1,method='constant',ties='mean')))
+  dat2b<-as.data.frame(do.call(cbind,approx(dat1$DateTimeForm,dat1$apparentTempC,xout=v1,method='constant',ties='mean')))
+  dat3<-data.table(DateTimeForm=as.POSIXct(dat2$x,origin='1970-01-01'),tempC=dat2$y,apparentTempC=dat2b$y)
+  dat4<-dat3[ ,lapply(.SD,FUN=function(x) {
+    c(mean(x),min(x),max(x),sum(!is.na(x)))}),by=(date=as.Date(dat3$DateTimeForm)),.SDcols=c('apparentTempC','tempC')]
+  dat4[,stat:=rep(c('mean','min','max','N'),366)]
+  dat5<-dcast(dat4, date ~ stat, value.var = c('apparentTempC','tempC'))
+  dat5[apparentTempC_N<18,c('apparentTempC_max', 'apparentTempC_mean', 'apparentTempC_min'):=NA]
+  dat5[tempC_N<18,c('tempC_max','tempC_mean','tempC_min'):=NA]
+  dat5
+}))
+})
+names(ls1)<-c('Atlanta','Phoenix','Detroit')
+```
+
+Create table of percentiles by year groupings.
+```{r chunk-2.1}
+tab1<-do.call(rbind,lapply(1:3,FUN=function(x) {
+  v1<-ls1[[x]][as.POSIXlt(date)<as.Date('2003-01-01') & as.POSIXlt(date)>=as.Date('1989-01-01'),sapply(.SD,FUN=quantile,p=0.5,na.rm=T),.SDcols=c('apparentTempC_max','apparentTempC_mean','apparentTempC_min','tempC_max','tempC_mean','tempC_min')]
+  v2<-ls1[[x]][as.POSIXlt(date)<as.Date('2003-01-01') & as.POSIXlt(date)>=as.Date('1989-01-01'),sapply(.SD,FUN=quantile,p=0.95,na.rm=T),.SDcols=c('apparentTempC_max','apparentTempC_mean','apparentTempC_min','tempC_max','tempC_mean','tempC_min')]
+  v3<-ls1[[x]][as.POSIXlt(date)<as.Date('2003-01-01') & as.POSIXlt(date)>=as.Date('1989-01-01'),sapply(.SD,FUN=quantile,p=0.99,na.rm=T),.SDcols=c('apparentTempC_max','apparentTempC_mean','apparentTempC_min','tempC_max','tempC_mean','tempC_min')]
+  c(v1,v2,v3)
+    }))
+tab2<-do.call(rbind,lapply(1:3,FUN=function(x) {
+  v1<-ls1[[x]][as.POSIXlt(date)<as.Date('2007-01-01') & as.POSIXlt(date)>=as.Date('2000-01-01'),sapply(.SD,FUN=quantile,p=0.5,na.rm=T),.SDcols=c('apparentTempC_max','apparentTempC_mean','apparentTempC_min','tempC_max','tempC_mean','tempC_min')]
+  v2<-ls1[[x]][as.POSIXlt(date)<as.Date('2007-01-01') & as.POSIXlt(date)>=as.Date('2000-01-01'),sapply(.SD,FUN=quantile,p=0.95,na.rm=T),.SDcols=c('apparentTempC_max','apparentTempC_mean','apparentTempC_min','tempC_max','tempC_mean','tempC_min')]
+  v3<-ls1[[x]][as.POSIXlt(date)<as.Date('2007-01-01') & as.POSIXlt(date)>=as.Date('2000-01-01'),sapply(.SD,FUN=quantile,p=0.99,na.rm=T),.SDcols=c('apparentTempC_max','apparentTempC_mean','apparentTempC_min','tempC_max','tempC_mean','tempC_min')]
+  c(v1,v2,v3)
+    }))
+APT.daily.81_10<-ls1
+APT.pctls<-data.table(city=names(ls1),years=rep(c('1989-2002','2000-2006'),each=3),rbind(tab1,tab2))
+APT.pctls<-APT.pctls[order(years,city),]
+rm(tab1,tab2)
+```
+
+```{r chunk-rename-st}
+stations<-st
+rm(st)
+```
+
+Clean up and save workspace.
+```{r chunk-1.8}
+rm(ls1,ls2)
+save.image(paste0(pa2,fi2))
+```
+
+Save the APT files separately, also.
+```{r chunk-1.9}
+save(APT.daily,APT.daily.81_10,APT.pctls,file=paste0(pa2,fi9))
+```
+
+

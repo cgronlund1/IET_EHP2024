@@ -1,0 +1,419 @@
+---
+title: "Modeling Indoor Heat Health Impacts, Step 4, Define RRs for Each APT, All Functions, All Cities"
+author: "Carina Gronlund"
+date: April 22, 2021"
+output:
+  html_notebook:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r chunk-setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, results='hide',cache=F)
+```
+
+Load necessary libraries and establish path and file names.
+```{r chunk-libs}
+library(data.table)
+
+source('C:\\Users\\gronlund\\Box Sync\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R')
+
+load(paste0(pa1,fi2))
+```
+
+#Step 4: Estimate the RRs for each degree of airport temperature (APT)
+Because not all of the functions are linear, we estimate the RR for each whole degree of APT within the range of given APTs instead of merely retaining a function. This means that the APTs associated with each person-day will have to be rounded to the nearest whole degree.
+
+First, import a csv file of health impacts from the literature.
+```{r chunk-lit-import}
+HIF.lit<-read.csv(paste0(pa1,fi16),stringsAsFactors=F,row.names=NULL,na.strings = c('ND','NA'))
+```
+
+For each relevant study, create an RR for each city for each 1 deg. C, assuming a linear association between the "high" temperature and the "threshold" temperature. For some studies, the results were given for relative thresholds, e.g., 99th vs. 90th percentiles, in which case the absolute temperatures corresponding to these thresholds in the corresponding time period had to be identified first. To save space in later merges with large data sets, percent increases in risk (pctIncR) are saved as integers.
+
+##Mortality
+For deaths, multiple studies are available. Studies differ in their definition of "all-cause," dropping external causes but usually keeping some external causes such as hypo- and hyper-thermia. In any case, the forces of nature external causes are a tiny fraction of the total mortality, so the RR would not, in practice, be much affected by this decision. These are all "natural cause" mortality studies, ignoring the effects of heat or cold on homicide. Therefore, we shorten the given health outcome to "allcause".
+
+For Gasparrini, import the betas for each temperature that were sent to us by Antonio Gasparrini and then assume linearity (from 1 deg. C change at upper end of observed range) after the highest observed temperature. Because the final Phoenix analog temperatures were as high as 229 C, and because the meta analysis of the allcause mortality studies need the same number of degrees of analog temperature, we use a maximum of 230 C. We do not convert RRs to integers because some exceed the maximum allowable integer size of 2147483647 in R but are not unrealistically high for diseases, like heat-related mortality, that have very low baseline incidences.
+```{r chunk-Gasparrini-mortality}
+v1<-'Gasparrini 2015 Lancet'
+v2<-seq(22,230,by=1)
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1,]) #limit to studies we're presently interested in
+dat1[,Health.Outcome:=gsub('-','',gsub(' or non-externally caused mortality','',Health.Outcome))]
+ls1<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  #import the RRs provided by Gasparrini
+  dat3<-fread(paste0(pa4,dat2$Applicable.City,'.csv'),stringsAsFactors=F)
+  c1<-dat3$tmean %in% v2
+  #use these data to create data.table with RRs in the temperature ranges common to those observed in the study and our range
+  dat4<-data.table(APT=as.integer(dat3$tmean[c1]),RR.APT=dat3$RR[c1])
+  #estimate linear increase in beta beyond the study's observed temperature range using the last two values provided
+  v3<-dat4[,tail(APT,2)]
+  dat2[,beta:=dat4[APT %in% v3,abs(diff(log(RR.APT)))]] 
+  v5<-(v3[2]+1):230
+  v4<-exp(dat2[,beta*(v5-v3[2])]+dat4[APT==v3[2],log(RR.APT)]) #extrapolate RR
+  #bind to the data already provided by Gasparrini
+  dat5<-rbind(dat4,data.table(APT=as.integer(v5),RR.APT=v4)) 
+  dat6<-c(list(data=dat5),dat2)
+  dat6
+})
+names(ls1)<-gsub(' {1,}','\\.',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome))
+rm(v1,v2,dat1)
+```
+
+For Schwartz et al. deaths, use the linear association in the paper and extrapolate to higher temperatures based on this linear association.
+```{r chunk-Schwartz-mortality}
+v1<-c('Schwartz 2016 EnvironH')
+v2<-seq(22,230,by=1)
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1,]) #limit to studies we're presently interested in
+dat1[,Health.Outcome:=gsub('-natural-','',Health.Outcome)]
+ls2<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase
+  dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v2-dat2$Threshold.temp.C))))
+  c(list(data=dat3),dat2)
+  })
+names(ls2)<-gsub(' {1,}','\\.',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome))
+rm(v1,v2,dat1)
+```
+
+Nordio et al. 2015:
+```{r chunk-Nordio-mortality}
+v1<-c('Nordio 2015 EnvironInt')
+v2<-seq(22,230,by=1)
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1,]) #limit to studies we're presently interested in
+dat1[,Health.Outcome:=gsub('-natural-','',Health.Outcome)]
+ls3<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase
+  dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v2-dat2$Threshold.temp.C))))
+  c(list(data=dat3),dat2)
+  })
+names(ls3)<-gsub(' {1,}','\\.',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome))
+rm(v1,v2,dat1)
+```
+
+Bobb et al. 2014:
+```{r chunk-Bobb-mortality}
+v1<-c('Bobb 2014 EHP')
+v2<-seq(22,230,by=1)
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1,]) #limit to studies we're presently interested in
+dat1[,Health.Outcome:=gsub('-natural-','',Health.Outcome)]
+ls4<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase
+  dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v2-dat2$Threshold.temp.C))))
+  c(list(data=dat3),dat2)
+  })
+names(ls4)<-gsub(' {1,}','\\.',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome))
+rm(v1,v2,dat1)
+```
+
+Gronlund et al. 2019 (for Detroit only):
+```{r chunk-Gronlund-mortality}
+v1<-c('Gronlund 2019 EnvironH')
+v2<-seq(22,80,by=1)
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1,]) #limit to studies we're presently interested in
+dat1[,Health.Outcome:=gsub('-natural-','',Health.Outcome)]
+ls5<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase
+  dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v2-dat2$Threshold.temp.C))))
+  c(list(data=dat3),dat2)
+  })
+names(ls5)<-gsub('\\+','up',gsub('-','_',gsub(' {1,}','\\.',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome,dat1$Ages,dat1$Sex))))
+rm(v1,v2,dat1)
+```
+
+Petitti et al. 2016 (for Phoenix only). The Petitti et al. paper also includes heat-related mortality. Phoenix is a place where the daily heat-related mortality rate is high enough to study it's association with temperature. From a look at the CDC Wonder/NCHS data, even if we applied the Petitti RRs to Georgia and Michigan heat-related death counts, the daily count of heat-related deaths would still be less than 1 even at very high temperatures.
+```{r chunk-Petitti-mortality}
+v1<-c('Petitti 2016 EHP')
+v2<-seq(22,230,by=1)
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1 & grepl('mortality',HIF.lit$Health.Outcome),]) #limit to studies we're presently interested in
+dat1[,Health.Outcome:=gsub('all-cause','allcause',Health.Outcome)]
+ls6<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  #dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase
+  #dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v2-dat2$Threshold.temp.C))))
+  #Using the usual estimate of RR, the attributable burden skyrockets to, e.g., 46,630 if everyone had an analog outdoor temperature of 60, which becomes a common analog temperature in the more extreme scenarios. Therefore, we cap the heat mortality RR at 2e7 so that, given the overall baseline incidence rate of 0.07, or average individual baseline rate of 0.07/1.39e6, an average person can't contribute a value of more than 1. This RR corresponds to the RR at 72 C, which is in the temperature range of a Finnish sauna, although a healthy individual should not remain in a sauna for more than 10-30 minutes and in no more than 3 sessions.
+  dat2[,beta:=RR.for.High.vs.Threshold/High.temp.C-Threshold.temp.C]
+  c(list(data=dat3),dat2)
+  })
+names(ls6)<-gsub(' ','\\.',gsub('-','_',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome, sep='.')))
+rm(v1,v2,dat1)
+```
+
+##Hospitalizations
+For hospitalizations, we use Gronlund et al. 2016. This may be double-counting ED visits, though, since a fraction of the ED visits then get admitted to the hospital. In estimating monetary costs, it would be necessary to subtract out the ED-visit portion of the hospitalization to get a cost estimate independent of the ED visit cost estimate.
+
+##Emergency Department (ED) Visits
+For emergency department visits, we use Winquist for Atlanta, Kingsley for Detroit, and Pettiti for Phoenix.
+
+Winquist et al. 2016. Because the metric is daily maximum temperature (Tmax) instead of daily mean temperature (Tmean) for which IETs were previously laboriously calculated, we include an additional process of regressing Tmax on Tmean in Atlanta for the month (August) of the contemporary heat wave in the contemporary period, calculating the Tmax values from integer Tmean values using the regression coefficients, and then estimating the logRRs for the Tmax values corresponding integer Tmean values.
+```{r chunk-Tmax-Tmean-ATL}
+dat1<-APT.daily.81_10[['Atlanta']][as.POSIXlt(date)$mon==7,c('tempC_mean','tempC_max')][,':='(tempC_mean2=tempC_mean^2,lnTempC_mean=log(tempC_mean))]
+m1<-lm(tempC_max ~ tempC_mean,data=dat1) #also tried tempC_mean2 and lnTempC_mean, but model fit was better without these terms
+cat('\nModel summary:')
+summary(m1)
+v1<-coef(m1)
+v2<-seq(22,80,by=1)
+v3<-v1[1]+v2*v1[2]
+cat('\nTmax range for Tmean 22-80 C:')
+range(v3)
+rm(m1,v1,dat1)
+```
+
+```{r chunk-Winquist-ED}
+v1<-c('Winquist 2016 EnvironRes')
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1,]) #limit to studies we're presently interested in
+ls10<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase in Tmax
+  #calculate RR for Tmax corresponding to the APT Tmean
+  dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v3-dat2$Threshold.temp.C)))) 
+  c(list(data=dat3),dat2)
+  })
+names(ls10)<-gsub(' ','\\.',gsub('-','_',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome,dat1$Ages)))
+rm(v1,v2,v3,dat1)
+```
+
+For Kingsley et al. 2015, this Rhode Island study is being used for Detroit. Also note that we estimate effects for Tmax > 80 F based on the beta given for the highest temperature range for which significant increases were observed. As for Winquist et al. above, we include the additional process of first estimating Tmax for integer Tmean values in Detroit for the year of the contemporary period heat wave.
+
+```{r chunk-Tmax-Tmean-DET}
+dat1<-APT.daily.81_10[['Detroit']][as.POSIXlt(date)$mon==7,c('tempC_mean','tempC_max')]
+m1<-lm(tempC_max ~ tempC_mean,data=dat1)
+cat('\nModel summary:')
+summary(m1)
+v4<-coef(m1)
+v2<-seq(22,80,by=1) #Tmean
+v3<-v4[1]+v2*v4[2] #Tmax
+cat('\nTmax range for Tmean 22-80 C:')
+range(v3)
+rm(m1,dat1)
+```
+
+```{r chunk-Kingsley-ED}
+v1<-c('Kingsley 2015 EHP')
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1 & HIF.lit$High.temp.C>=v3[1],]) #discard betas below the minimum threshold
+dat1[,Health.Outcome:=gsub('all-cause','allcause',Health.Outcome)]
+ls11<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase
+  dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v3-dat2$Threshold.temp.C)))) #RR calculated for Tmax corresponding to the Tmean
+  #keep only the estimates for that range if higher ones available
+  if (round(dat2$High.temp.C,1)==26.7 & dat2$Ages %in% c('65-120','18-64')) dat3<-dat3[APT <= round((26-v4[1])/v4[2],0),] 
+  #keep only the estimates for that range if lower ones available
+  if (round(dat2$Threshold.temp.C,1)==26.7 & dat2$Ages %in% c('65-120','18-64')) dat3<-dat3[APT > round((26-v4[1])/v4[2],0),] 
+    c(list(data=dat3),dat2)
+  })
+names(ls11)<-gsub(' ','\\.',gsub('-','_',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome,dat1$Ages,paste0(round(dat1$Threshold.temp.C,1),'-',round(dat1$High.temp.C,1)))))
+rm(v1,v2,v3,dat1,v4)
+```
+
+Pettiti et al. 2016:
+```{r chunk-Pettiti-ED}
+v1<-c('Petitti 2016 EHP')
+v2<-seq(22,230,by=1)
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1 & grepl('ED',HIF.lit$Health.Outcome),]) #keep relevant study
+ls12<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase
+  dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v2-dat2$Threshold.temp.C))))
+  c(list(data=dat3),dat2)
+  })
+names(ls12)<-gsub(' ','\\.',gsub('-','_',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome)))
+```
+
+
+For pre-term births, we use Sun et al. 2019 for all three cities.
+```{r chunk-Sun-PTB}
+v1<-c('Sun 2019 EnvironInt')
+v2<-seq(22,230,by=1)
+dat1<-setDT(HIF.lit[HIF.lit$Study %in% v1,]) #keep relevant study
+ls13<-lapply(1:nrow(dat1),FUN=function(x) {
+  dat2<-dat1[x,]
+  dat2[,beta:=log(RR.for.High.vs.Threshold)/(High.temp.C - Threshold.temp.C)] #beta for a deg. C increase
+  dat3<-data.table(APT=as.integer(v2),RR.APT=exp(dat2$beta*(pmax(0,v2-dat2$Threshold.temp.C))))
+  c(list(data=dat3),dat2)
+  })
+names(ls13)<-gsub(' ','\\.',gsub('-','_',paste(dat1$Applicable.City,dat1$Study,dat1$Health.Outcome)))
+rm(dat1,v1,v2)
+```
+
+Bind the lists together.
+```{r chunk-bind}
+RR.APT<-c(ls1,ls2,ls3,ls4,ls5,ls6,ls10,ls11,ls12,ls13)
+```
+
+Check that RRs have been estimated for every study and indicate the range of RRs for 22-80 C.
+```{r chunk-QA-RR.APT}
+dat2<-do.call(rbind,lapply(RR.APT, FUN=function(x) {
+  dat1<-x$data[x$data$APT < 81,'RR.APT'][[1]]
+  data.table(Study=x$Study,City=x$Applicable.City,Health.Outcome=x$Health.Outcome,Ages=x$Ages,RR.APT.min=min(dat1),RR.APT.med=median(dat1),RR.APT.max=max(dat1))}))
+dat2
+rm(dat2)
+```
+
+
+Create an all-cause mortality ensemble of the studies for which non-age-specific results are available for each city by doing fixed effects meta analysis for each C (given that the minimum mortality temperatures don't match). This is simply a weighted average of the logRRs, weighted by the inverse of the beta's variance. The Schwartz study used the same data set as Nordio, presumably, so we use Nordio's beta.1C.SE.
+```{r chunk-mortality-meta}
+ls14<-lapply(fullcity,FUN=function(city) {
+  dat1<-setDT(do.call(rbind,lapply(RR.APT[!grepl('meta|Meta',names(RR.APT))],FUN=function(x) {if(grepl('mortality',x$Health.Outcome) & grepl('all',x$Health.Outcome) & x$Applicable.City==city & !grepl('Meta',x$Study) & grepl('both',x$Sex) & grepl('0-120',x$Ages)) data.frame(Study=x$Study,Ages=x$Ages,Sex=x$Sex,APT=x$data$APT,beta=log(x$data$RR.APT),beta.1C.SE=x$beta.1C.SE)}))) #identify all the allcause mortality studies for that city and stack
+  if (dat1[,sd(table(Study))]!=0) stop('Number of rows in each study dont match.')
+  #Give Nordio SE, which is missing, to Schwartz
+  v1<-dat1[grepl('Nordio',Study),'beta.1C.SE'][1]
+  dat1[grepl('Schwartz',Study),beta.1C.SE:=v1] 
+  #perform fixed effects analysis by taking weighted mean of the beta, weighting by the inverse of the SE^2
+  dat2<-dat1[,.(beta=weighted.mean(beta,1/(beta.1C.SE^2))),by=.(APT)][,RR.APT:=exp(beta)]
+  list(data=dat2,Study='Meta',Applicable.City=city,Health.Outcome='allcause mortality',Ages='0-120',Sex='both')
+})
+names(ls14)<-paste0(fullcity,'.meta.allcause.mortality')
+```
+
+Add the meta analyses from each city to the RR.APT list.
+```{r chunk-meta-bind}
+if (any(grepl('meta|Meta',names(RR.APT)))) stop('Meta analyses already bound to RR.APT.')
+v3<-length(RR.APT)
+v2<-length(ls14)
+RR.APT[v3+1:v2]<-ls14
+names(RR.APT)[v3+1:v2]<-names(ls14)
+rm(v2,v3)
+```
+
+Save workspace and also save the RR.APT list separately.
+```{r chunk-save}
+rm(city,cy,list=grep('ls[[:digit:]]{1,2}',ls(),value=T)) #remove the lists
+save.image(paste0(pa2,fi2))
+save(RR.APT,file=paste0(pa2,fi17))
+```
+
+##Recalculating RRs to account for the risk only being among individuals with IET above a threshold
+For each combination of study and study population (each RR.APT list element) and each APT within that combination, estimate the population who actually had IETs above the given thresholds for that study in the contemporary power-on scenario. The estimate the RR.E and pctIncRisk.E, or those quantities among the exposed individuals. Note: we skip this step for now given its complexity on top of the analog temperature complexity. The derivation is as follows:
+
+We are given:
+$AF_T=\frac{RR_T-1}{RR_T}$
+$BB_T=BB_E+BB_U$
+$BB_E=POP_E*BIR$
+$AB_T=(RR_T-1)BB_T$
+$TB=AB+BB$
+$TB=POP_T\times IR$
+$BB_U=POP_U\times BIR$
+
+We assume:
+$BIR=BIR_T=BIR_U$
+$AB_T=AB_E+AB_U$ and $AB_U=0$
+$AB_T=(RR_E-1)BB_E=(RR_E-1)\times POP_E\times BIR$
+
+Using:
+$TB=AB_T+BB_T=AB_T+BB_E+BB_U=AB_T+(POP_E+POP_U)\times BIR$
+then
+$BIR=\frac{TB-AB_T}{POP_T}$
+
+Therefore:
+$AB_T=(RR_E-1)\times POP_E \times \frac{TB-AB_T}{POP_T}$
+and 
+$RR_E-1=\frac{AB_T\times POP_T}{POP_E(TB-AB_T)}$
+Substiting for AB_T,
+$RR_E-1=\frac{AF \times TB \times POP_T}{POP_E(TB-AF \times TB)}$
+and then the TB in the numerator and denominator cancel out.
+$RR_E-1=\frac{AF\times POP_T}{POP_E(1-AF)}$
+The substitution for AF,
+$RR_E-1=\frac{\frac{RR_T-1}{RR_T}\times POP_T}{POP_E(1-\frac{RR_T-1}{RR_T})}$
+The $RR_T$ in the numerator and denominator cancel out, leaving:
+$RR_E-1=\frac{(RR-1)\times POP_T}{POP_E}$
+
+Therefore, the proportion increase in risk among the exposed can be estimated as the total proportion increase in risk times the ratio of the total population to the exposed population, assuming a constant baseline incidence rate. We don't end up using these in the final calculations, because it doesn't make much difference except for the studies that are specific to disease types and have very high RRs, in which case RRs are already high and highly uncertain.
+
+
+```{r chunk-pop-exposed}
+#RR.APT.E<-RR.APT
+v5<-setNames(c(28,26,35),c('ATL','DET','PHX')) #value at which APTmeanS was mean-centered for each city
+v6<-setNames(c(3,4,4),c('ATL','DET','PHX')) #value at which APTmeanS was standardized for each city
+v10<-setNames(c(25,22,25),c('ATL','DET','PHX'))
+v11<-setNames(c(3,4,4),c('ATL','DET','PHX'))
+for (ci in c('ATL','DET','PHX')[2:3]) {
+  cat('\n',ci,'\n')
+  v1<-fullcity[match(ci,abbrcity)]
+  v2<-grep(ci,c(fi44,fi45,fi46),value=T)
+  mc<-v5[ci] #actual mean-centering value for APTmean for this city
+  st<-v6[ci] #standardization value for APTmean for this city
+  mcI<-v10[ci] #actual mean-centering value for IETmean for this city
+  stI<-v11[ci] #standardization value for IETmean for this city
+  #pull in coefficients and random intercepts
+  load(paste0(pa2,v2))
+  betas<-get(paste0('models.',ci))[['coef.lm.reduced.housing.rint.scaled']] #coefficients
+  rints<-get(paste0('models.',ci))[['rint.lm.reduced.housing.rint.scaled']] #random intercepts
+  rm(list=paste0('models.',ci))
+  beta3<-grep('APTmeanS:',names(betas),value=T) #all the coefficient names for the interaction terms
+  #get all the coefficient names but those for Intercept, APTmean, and the interactions with APTmean
+  beta1<-c(names(betas)[!(names(betas) %in% c('(Intercept)','APTmeanS',beta3))])
+  #get the daily IET mean values
+  load(paste0(pa2,'PowerOn.Present.YesHW.Control.',v1,'.RData'))
+  dat1<-get(paste0('IET.personday.PowerOn.Present.YesHW.Control.',v1))
+  rm(list=paste0('IET.personday.PowerOn.Present.YesHW.Control.',v1))
+  #drop the individuals who didn't make it into the regression model because of missings
+  dat1<-dat1[PERSON_ID %in% names(rints),]
+  #rescale the variables
+  if (ci=='ATL') {dat1<-varDeriv.fxn.ATL(dat1)}
+  if (ci=='DET') {dat1<-varDeriv.fxn.DET(dat1)}
+  if (ci=='PHX') {dat1<-varDeriv.fxn.PHX(dat1)}
+  #order the data set for merging
+  dat1<-dat1[order(date,PERSON_ID),]
+  #drop all but one of the dates
+  dat1<-dat1[1:nrow(rints),]
+  #merge in the random intercepts
+  if(any(dat1$PERSON_ID!=rep(names(rints),5))) stop('PERSON_IDs dont match.')
+  dat1[,rints:=rints[,1]]
+  rm(rints)
+for (i in 1:length(RR.APT)) {
+  v1<-c('ATL','DET','PHX')[match(RR.APT[[i]]$Applicable.City,c('Atlanta','Detroit','Phoenix'))]
+  if (v1 != ci) next #just focus on the ci city
+  cat('\n',names(RR.APT)[[i]],'\n')
+  if (!is.null(RR.APT[[i]]$Threshold.temp.C)) {v2<-RR.APT[[i]]$Threshold.temp.C} else v2<-20
+  v3<-RR.APT[[i]]$Applicable.City
+  #pull out the applicable range of ages and genders for the given study
+  v7<-as.numeric(unlist(strsplit(RR.APT[[i]]$Ages,'-'))) #Ages
+  v8<-unlist(list(c('M',1L),c('F',2L),c('M','F',1L,2L))[match(RR.APT[[i]]$Sex,c('male','female','both'))]) #applicable genders
+  dat2<-dat1[SEX %in% v8 & AGE <= v7[2] & AGE >= v7[1],] #applicable total population
+  P.T<-nrow(dat2)
+  #initialize the pctIncRisk.E variables
+  RR.APT.E[[i]]$data<-data.table(RR.APT[[i]]$data,P.E=as.integer(NA),P.T=P.T,pctIncRisk.E=as.integer(NA))
+  #estimate each person's IET for each given APT
+  for (j in RR.APT[[i]]$data$APT) {
+    cat(j,'')
+    if (j<=v2) {RR.APT.E[[i]]$data[APT==j,':='(P.E=as.integer(NA),pctIncRisk.E=pctIncRisk)]; next}
+    dat2[,':='(`(Intercept)`=1,APTmeanS=(j-mc)/st)]
+    dat2[,(beta3):=APTmeanS*.SD,.SDcols=beta1]
+    dat2[,IETmeanS.est:=as.vector(t(betas) %*% t(dat2[,.SD,.SDcols=names(betas)]))][,IETmeanS.est:=IETmeanS.est+rints]
+    #rescale the IET
+    dat2[,IETmean.est:=IETmeanS.est*stI+mcI]
+    #count how many people had IETs above the given threshold
+    v4<-nrow(dat2[IETmean.est>=v2,])
+    #calculate the new RR-1 according to the above formula, taking into account that integers can't be higher than 2147483647 in R
+    v12<-RR.APT[[i]]$data[APT==j,RR.APT-1]
+    RR.APT.E[[i]]$data[APT==j,':='(P.E=v4,pctIncRisk.E=as.integer(min(round(v12*P.T/v4*100,0),2147483647)))]
+    #fix values that became infinite because v4 was 0
+    RR.APT.E[[i]]$data[is.infinite(pctIncRisk.E),pctIncRisk.E:=0]
+    }
+  }
+}
+```
+
+Look at results.
+```{r chunk-summary-RR.APT.E, results='show'}
+for (i in 1:length(RR.APT.E)) {
+  cat('\n',names(RR.APT.E)[i],'\n')
+  print(summary(RR.APT.E[[i]]$data))
+}
+```
+
+
+Save the RR.E.APT list separately.
+```{r chunk-save-RR.APT.E}
+rm(dat1,dat2,beta1,beta3,betas,ci,i,j,mc,mcI,st,stI,v1,v2,v3,v4,v5,v6,v7,v8,v10,v11,v12)
+save(RR.APT.E,file=paste0(pa2,fi47))
+```
+
+
+

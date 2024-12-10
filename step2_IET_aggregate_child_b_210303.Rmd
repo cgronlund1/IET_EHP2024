@@ -1,0 +1,71 @@
+---
+title: "Modeling Indoor Heat Health Impact Step 2b Aggregate IET by Day"
+author: "Carina Gronlund"
+date: "March 3, 2021"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, cache=F, results='show')
+```
+
+Find which days are the YesHW days from the hw.periods file.
+```{r}
+v1<-regexpr('Present|Midcentury|Endofcentury',fs2)
+v2<-substr(fs2,v1,v1+attr(v1,'match.length')-1)
+v3<-c('1980 - 2010 (ECMWF)','2041-2070 (RCP8.5)','2071-2090 (RCP8.5)') 
+v4<-c('Present','Midcentury','Endofcentury')
+v5<-v3[match(v2,v4)]
+dates<-hw.periods[hw.periods$City==cy & hw.periods$Period==v5 & hw.periods$hottest.5.days.GCM==T,date]
+rm(v1,v2,v3,v4,v5)
+```
+
+In the following code, the files are first downloaded manually from OneDrive.
+```{r}
+v1<-sprintf('%02.f',c(4:23,0:3))
+v3<-paste0(pa2,fs1)
+dat1<-fread(file=v3)
+#rename columns
+v2<-paste(rep(dates[1:5],each=24),rep(v1,5),sep='.')
+names(dat1)<-v2
+#save as smaller file by converting degrees F to tenths of degrees F and converting to integer
+dat1[,(v2):=lapply(.SD,function(x) {as.integer(x*10)})]
+rm(dates,v1,v2)
+```
+
+Incorporate just the PERSON_ID from the synthetic population dataset.
+```{r}
+v1<-paste0(pa2,grep(cy,c(fi3,fi4,fi5),value=T))
+dat7<-fread(file=v1)
+dat1<-cbind(dat1,dat7[,'PERSON_ID'])
+```
+
+After importing the files, reshape them so that they're long.
+```{r}
+v1<-grep('[[:digit:]]{4}-[[:digit:]]{2}-[[:digit:]]{2}',names(dat1))
+dat2<-melt(dat1,id.vars=c('PERSON_ID'),measure = v1,variable.name='dateTime',value.name='IET')
+```
+
+Then find the min, max, and mean IET by date and ID. Also, per Dave, the time activity data was 4 am to 4 am, and it was easier to consider a 24-hour period in that range than to go midnight to midnight.
+```{r}
+dat2[,date:=substr(dateTime,1,10)]
+dat2<-dat2[,.(IET.mean=mean(IET), IET.min=min(IET), IET.max=max(IET)),by=.(date,PERSON_ID)]
+```
+
+Save the IETs.
+```{r}
+IET.daily<-dat2[,.(date,PERSON_ID,IET.mean,IET.min,IET.max)]
+v1<-paste0('IET.personday.',fs2)
+assign(v1,IET.daily)
+save(list=v1,file=paste0(pa2,fs2,'.RData'))
+rm(dat2,IET.daily,list=v1)
+rm(v1,fs1,fs2,cy)
+```
+
+
+
+

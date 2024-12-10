@@ -1,0 +1,155 @@
+---
+title: "Modeling Indoor Heat Health Impacts, Step 3c, Estimate IET for Each MMT"
+author: "Carina Gronlund"
+date: "March 21, 2022"
+output:
+  html_notebook:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r chunk-setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, results='hide',cache=F)
+```
+
+Load necessary libraries and establish path and file names.
+```{r chunk-libs}
+library(data.table)
+
+source('C:\\Users\\gronlund\\Dropbox (University of Michigan)\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R')
+
+load(paste0(pa1,fi2))
+```
+
+#Step 3c. Estimate IET for Each Study's MMT for each Person-Day in the Contemporary Power-On Scenario
+This step actually precedes Step 3b, so see Step 3b for the full rationale for why this step is necessary. Basically, we need to know what the IET for each person-day is for each study's MMT, because we are assuming that these are the IETs at which their respective individuals have a heat-attributable risk of zero. We estimate IET.MMT as:
+
+$[IET]_{pd}=\beta_0+\pmb{\beta_1X_{pd}}+\beta_2OAT_{pd}+\pmb{\beta_3}(OAT_{pd}\times\pmb{X_{pd}})+\gamma_p$ Eq. 1
+
+In place of $OAT_{pd}$, we will insert the study-specific MMT. We will first create functions, and then loop through each city to generate a data.table for each city that contains persons as rows and MMTs as columns.
+
+
+##Identify the IETs for each study.
+For each of the studies, pull out the respective MMT for that city. If there was no identified MMT in the RR.APT list, as was the case for the meta-analyzed RRs, then use the point at which the beta was at its minimum.
+
+```{r}
+OAT.MMT<-lapply(RR.APT, FUN=function(x){
+  ifelse(is.null(x[['Threshold.temp.C']]),x[['data']][beta==min(beta),APT],x[['Threshold.temp.C']])
+  })
+```
+
+
+##Calculate the IETs for each person for the given MMT.
+For each city, import the model results and the demographics file. Then calculate the IET according to the above equation.
+
+
+```{r}
+v3<-setNames(c(28,26,35),c('ATL','DET','PHX')) #value at which APTmeanS was mean-centered for each city
+v4<-setNames(c(3,4,4),c('ATL','DET','PHX')) #value at which APTmeanS was standardized for each city
+v8<-setNames(c(25,22,25),c('ATL','DET','PHX'))
+for (ci in abbrcity) {
+  cat('\n',ci,'\n')
+  v1<-fullcity[match(ci,abbrcity)]
+  v2<-grep(ci,c(fi44,fi45,fi46),value=T)
+  mc<-v3[ci] #actual mean-centering value for APTmean for this city
+  st<-v4[ci] #standardization value for APTmean for this city
+  mci<-v8[ci] #mean-centering value for IETmean for this city
+  #pull in coefficients and random intercepts
+  load(paste0(pa2,v2))
+  betas<-get(paste0('models.',ci))[['coef.lm.reduced.redhousing.rint.scaled']] #coefficients
+  rints<-get(paste0('models.',ci))[['rint.lm.reduced.redhousing.rint.scaled']] #random intercepts
+  rm(list=paste0('models.',ci))
+  beta3<-grep('APTmeanS:',names(betas),value=T) #all the coefficient names for the interaction terms
+  #get all the coefficient names but those for Intercept, APTmean, and the interactions with APTmean
+  beta1<-c(names(betas)[!(names(betas) %in% c('(Intercept)','APTmeanS',beta3))])
+  beta2<-betas['APTmeanS']
+  beta0<-betas['(Intercept)']
+  #get the demographics and rename as demos
+  load(paste0(pa2,grep(ci,c(fi6,fi7,fi8),value=T)))
+  demos<-get(paste0('demographics.',ci))
+  rm(list=paste0('demographics.',ci))
+  dat1<-demos[PERSON_ID %in% names(rints),]
+  rm(demos)
+  dat1[,c('tempC_mean','IET.mean'):=NA] #add these to the data set just so varDeriv.fxn will work
+  if (ci=='ATL') {dat2<-varDeriv.fxn.ATL(dat1); dat2<-varDeriv.fxn2.ATL(dat2)}
+  if (ci=='DET') {dat2<-varDeriv.fxn.DET(dat1); dat2<-varDeriv.fxn2.DET(dat2)}
+  if (ci=='PHX') {dat2<-varDeriv.fxn.PHX(dat1); dat2<-varDeriv.fxn2.PHX(dat2)}
+  dat2<-dat2[order(PERSON_ID),]
+  if(any(dat2$PERSON_ID!=names(rints))) stop('PERSON_IDs dont match.')
+  dat2[,rints:=rints[,1]]
+  dat2[,beta1.x:=as.vector(t(betas[beta1]) %*% t(dat2[,.SD,.SDcols=beta1]))] #beta1 %*% X, with X in same order as beta1
+  dat2[,beta3.x:=as.vector(t(betas[beta3]) %*% t(dat2[,.SD,.SDcols=beta1]))] #beta3 %*% X, with X in same order as beta1
+  v5<-OAT.MMT[grep(v1,names(OAT.MMT))]
+  for (v6 in 1:length(v5)) {
+    dat2[,APTmeanS:=(v5[[v6]]-mc)/st]
+    dat2[,beta2.oat:=beta2*APTmeanS]
+    dat2[,beta3.oat.x:=beta3.x*APTmeanS]
+    dat2[,paste0('IET.MMT.',names(v5)[v6]):=(beta0+beta1.x+beta2.oat+beta3.oat.x+rints)*st+mci]
+  }
+  #prepare the dataset for export
+  #convert IET.MMT to integer hundredths of degrees C to save space
+  v7<-grep('IET\\.MMT',names(dat2),value=T)
+  dat2[,(v7):=lapply(.SD,FUN=function(x) {as.integer(round(x*100,0))}),.SDcols=v7] 
+  #restrict the number of columns to save space
+  dat2<-dat2[,.SD,.SDcols=c('PERSON_ID',v7)]
+  #export
+  fwrite(dat2,paste0(pa2,paste0('IET_MMT_',v1,'.csv')))
+  rm(dat1,dat2,v1,v2,v5,v6,v7,betas,rints,beta0,beta1,beta2,beta3,mc,st,mci)
+  }
+rm(ci,v3,v4,v8)
+```
+
+##Calculate predicted OAT.MMT
+
+This is: $OAT_{pMMT}=\frac{[IET_{MMT}]-\beta_0-\pmb{\beta_1X_{pd}}-\gamma_p}{\beta_2+\pmb{\beta_3X_{pd}}}$
+```{r}
+mco<-setNames(c(28,26,35),c('ATL','DET','PHX')) #value at which APTmeanS was mean-centered for each city
+stio<-setNames(c(3,4,4),c('ATL','DET','PHX')) #value at which APTmeanS and IETmeanS were standardized for each city
+mci<-setNames(c(25,22,25),c('ATL','DET','PHX'))
+for (city in fullcity) {
+ci<-abbrcity[match(city,fullcity)]
+fi<-c(fi44,fi45,fi46)[match(city,fullcity)]
+#read in IET_MMT
+dat1<-fread(paste0(pa2,'IET_MMT_',city,'.csv')) 
+#get the demographics and rename as demos
+load(paste0(pa2,grep(ci,c(fi6,fi7,fi8),value=T)))
+demos<-get(paste0('demographics.',ci))
+rm(list=paste0('demographics.',ci))
+#merge demos to IET.MMT
+dat1<-demos[,.(PERSON_ID,HH_INCOME,AGE,SEX,OCC,EP_CLASS)][dat1,on='PERSON_ID']
+dat1[order(PERSON_ID),] #rints ordered by PERSON_ID
+#define variables
+if (ci=='ATL') {dat1<-varDeriv.fxn.ATL(dat1); dat1<-varDeriv.fxn2.ATL(dat1)}
+if (ci=='DET') {dat1<-varDeriv.fxn.DET(dat1); dat1<-varDeriv.fxn2.DET(dat1)}
+if (ci=='PHX') {dat1<-varDeriv.fxn.PHX(dat1); dat1<-varDeriv.fxn2.PHX(dat1)}
+#read in betas and person-specific random intercepts
+load(paste0(pa2,fi))
+betas<-get(paste0('models.',ci))[['coef.lm.inccat.redhousing.noAC.rint.scaled']] #coefficients
+rints<-get(paste0('models.',ci))[['rint.lm.inccat.redhousing.noAC.rint.scaled']] #random intercepts
+rm(list=paste0('models.',ci))
+#beta0 (intercept)
+beta0<-betas[1]
+#beta1 vector (coefficients for non-time-varying terms)
+beta1<-betas[grep('Intercept|APTmeanS',names(betas),invert=T)]
+#beta2 (coefficient for APTmeanS)
+beta2<-betas['APTmeanS']
+#beta3 vector (coefficients for interaction terms)
+beta3<-betas[grep('APTmeanS:',names(betas))]
+#calculate beta1*X
+dat1[,beta1.x:=as.vector(t(beta1) %*% t(dat1[,.SD,.SDcols=names(beta1)]))]
+#calculate beta3*X
+dat1[,beta3.x:=as.vector(t(beta3) %*% t(dat1[,.SD,.SDcols=names(beta1)]))]
+#calculate OAT.MMT for each study using above equation and un-standardizing and un-mean-centering the value and then saving as hundreds of OATS in an integer to save space
+IET.studies<-grep('IET\\.MMT',names(dat1),value=T)
+OAT.studies<-gsub('IET','OAT',IET.studies)
+#for (i in 1:12) {
+#  dat1[,(OAT.studies[i]):=as.integer((((get(IET.studies[i])/100-mci[ci])/stio[ci]-beta0-rints-beta1.x)/(beta2+beta3.x)*stio[ci]+mco[ci])*100)]} #results same as next line
+dat1[,(OAT.studies):=lapply(IET.studies,FUN=function(x) {
+  as.integer(round((((get(x)/100-mci[ci])/stio[ci]-beta0-rints-beta1.x)/(beta2+beta3.x)*stio[ci]+mco[ci])*100,0))})]
+dat2<-dat1[,.SD,.SDcols=c('PERSON_ID',grep('\\.MMT',names(dat1),value=T))]
+fwrite(dat2,file=paste0(pa2,'OAT_MMT_',city,'.csv'))
+rm(dat1,dat2)
+}
+```
+

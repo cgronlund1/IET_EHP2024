@@ -1,0 +1,43 @@
+---
+title: "Modeling Indoor Heat Health Impact Step 2 Aggregate IET by Day"
+author: "Carina Gronlund"
+date: "March 3, 2021"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r chunk-setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, cache=F)
+```
+
+Libraries and master workspace.
+```{r libs, eval=T}
+library(data.table)
+source('C:\\Users\\gronlund\\Box Sync\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R', local = knitr::knit_global())
+load(paste0(pa2,fi2))
+```
+
+#Step 2b: Aggregate Hourly IET by Day for the Other Scenarios
+This step uses large IET data sets, one per city per period per heatwave period (during or post), provided by Dave Hondula, that contain an IET for each synthetic person in a city for each hour for each day in hw.periods. We loop through each scenario so that we're not trying to hold multiple multi-gigabyte hourly files in the R workspace, which R would not allow. The following code is run for each of the following scenarios:
+```{r}
+cat(paste(scenarios,collapse='\n'))
+```
+
+
+##IET Inputs for Other Scenarios/Step 3b
+
+```{r run-other-scenarios, results='asis'}
+res<-list()
+for (fs1 in grep('PowerRestore',IET.input.other.filenames,value=T)[10:30]) {
+  fs2<-gsub('_','\\.',gsub('HourlyIETRun_|HoulyIETRun_','',gsub('Nov30.csv','',fs1)))
+  v1<-regexpr(c('Atlanta|Detroit|Phoenix'),fs1)
+  v2<-v1+attr(v1,'match.length')
+  city<-substr(fs1,v1,v2-1) #full city name
+  cy<-abbrcity[match(city,fullcity)] #abbreviated city
+  res<-c(res,list(knitr::knit_child('step2_IET_aggregate_child_b_210303.Rmd', quiet=T, envir=environment())))
+}
+cat(res[[1]],'\n')
+```

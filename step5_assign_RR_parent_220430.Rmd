@@ -1,0 +1,328 @@
+---
+title: "Modeling Indoor Heat Health Impacts: Step 5: Assign RR to Each IET"
+author: "Carina Gronlund"
+date: "March 21, 2022"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T)
+```
+
+Load necessary libraries and establish path and file names.
+```{r libs, eval=T}
+library(data.table)
+source('C:\\Users\\gronlund\\Dropbox (University of Michigan)\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R')
+load(paste0(pa2,fi2))
+```
+
+#Step 5. Calculate excess predicted OAT and excess analog OAT and use to assign RRs to each IET
+
+Loop through each city and scenario constructed in step 3 to apply the RR to each person based on their OATan for each health outcome. The following code loops through the "child" code, or the series of functions. Note that the advised approach--to reference chunks--does not seem to work in this RMarkdown session, so the chunks are encapsulated as functions instead.
+
+Merge the demographics into the OAT_IET_ file from step 3b by PERSON_ID, retaining the necessary demographics.
+```{r,eval=F}
+merge.demos.fxn<-function() {
+v1<-paste0(pa2,'OAT_IET_',sc,'_',city,'.csv')
+APT.IET<-fread(v1)
+APT.IET[,':='(OATan=as.integer(round(OATan/100),0),OATp=as.integer(round(OATp/100),0))]
+APT.IET<-merge(APT.IET,demos[,c('PERSON_ID','AGE','SEX')],by='PERSON_ID',all.x=T)
+APT.IET[order(PERSON_ID,date),]
+}
+```
+
+Merge in the RR, looping through each study's effect estimates. If the study's age range or sex is not applicable to that person, change the RR to NA. If the analog APT was less than 22, change the RR from NA to 1. Additionally, for the Petitti heat-related mortality estimates, the effects skyrocket. Given that this study measures heat effects much more directly, we cap the maximum effect at a maximum possible analog outdoor temperature value of 55 C. Note that RR.APT.an is the analog, or equivalent, RR and is derived from the anOAT, or equivalent OAT, while RR.APT.p is the RR derived from the pOAT, or corresponding OAT.
+```{r,eval=F}
+merge.RR.fxn<-function() {
+dat4<-do.call(cbind,lapply(ls1,FUN=function(x) {
+    v1=x$Study; v2=x$Health.Outcome; v3=x$Ages; v4=x$Sex; MMT=x$Threshold.temp.C
+    v5<-gsub(' ','\\.',paste(v1,v2)) #name of study without city
+    v6<-lapply(v3,FUN=function(y) {strsplit(y,'-')[[1]][1]}) #min Age
+    v7<-lapply(v3,FUN=function(y) {strsplit(y,'-')[[1]][2]}) #max age
+    dat2<-data.table(x$data[,c('APT','RR.APT')]) #pull out the actual data
+    #if the study is Petitti heat-related mortality, cap the analog temperature at 55 C.
+    if (v1=='Petitti 2016 EHP' & v2=='heat-related mortality') {
+      v9<-dat2[APT==55,RR.APT]
+      dat2[APT>55,RR.APT:=v9]}
+    #if the MMT is missing, set it to the APT at the minimum RR.APT value
+    if (is.null(MMT)) {MMT<-dat2[RR.APT==min(RR.APT),APT]}
+    setnames(dat2,old=c('APT','RR.APT'),new=c('OATan','RRan'))
+    dat2[,':='(OATp=OATan,RRp=RRan)] #duplicate the OAT and RR values
+    dat3<-dat2[,.(OATan,RRan)][APT.IET[,.(PERSON_ID,date,AGE,SEX,OATan,OATp)],on='OATan']
+    dat3<-dat2[,.(OATp,RRp)][dat3[,.(PERSON_ID,date,AGE,SEX,OATan,RRan,OATp)],on='OATp']
+    dat3<-dat3[order(PERSON_ID,date),] #reordering is necessary for the join using cbind to correctly match the rows
+    v8<-match(v4,c('male','female','both'))
+    #change NA RR to 1 when analog APT less than MMT
+    dat3[OATan-MMT<=0 & is.na(RRan),RRan:=1][OATp-MMT<=0 & is.na(RRp),RRp:=1]
+    #change RR to NA when for different age group or sex
+    dat3[(AGE < v6 | AGE > v7) | (SEX != v8 & v8 < 3), ':='(RRan=NA,RRp=NA)] 
+    #all(dat3[,.(PERSON_ID,date)]==APT.IET[,.(PERSON_ID,date)]) #TRUE, so order still preserved
+    dat3[,.SD,.SDcols=c('RRan','RRp')] #restrict columns in output
+}))
+names(dat4)<-gsub(paste0(city,'\\.'),'',names(dat4))
+cbind(APT.IET[,c('PERSON_ID','SEX','AGE','date','IET.mean','OATan','OATp')],dat4)
+}
+```
+From random samples or rows, we can see that the instances where the pctIncRisk is not applicable to that person the value has been converted to NA.
+
+Find instances where there are results for multiple ages and sexes within the same study and select the non-missing value on these studies using rowMeans with na.rm=T (which quickly removes all but the one nonNA value in each row). Also, for missing ages, set these RRs to 1, because in each of these studies, the null was not rejected in these age groups or there was no information on these age groups. The exception is the preterm births, for which effects in non-child-bearing women are indeed NA.
+```{r, eval=F}
+sel.nonmiss.fxn<-function() {
+v1<-'Gronlund.2019.EnvironH.allcause.mortality'
+v2<-'Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits'
+v3<-'Winquist.2016.EnvironRes.Renal.ED.visits'
+v4<-'Winquist.2016.EnvironRes.heat_related.ED.visits'
+v5<-'Kingsley.2015.EHP.allcause.ED.visits'
+v6<-'Kingsley.2015.EHP.heat_related.ED.visits'
+v7<-c(v1,v2,v3,v4,v5,v6)
+#keep the studies relevant to the given city
+v8<-v7[unlist(lapply(v7,FUN=function(x) {any(grepl(x,names(dat4)) & grepl('RRan',names(dat4)))}))]
+v10<-paste0(v8,'.RRan')
+v9<-v7[unlist(lapply(v7,FUN=function(x) {any(grepl(x,names(dat4)) & grepl('RRp',names(dat4)))}))]
+v11<-paste0(v9,'.RRp')
+#create a list where each element is the vector of age-and-sex specific substudies in the overall study
+ls2a<-lapply(v8,FUN=function(x) names(dat4)[grepl(x,names(dat4)) & grepl('RRan',names(dat4))])
+ls2b<-lapply(v9,FUN=function(x) names(dat4)[grepl(x,names(dat4)) & grepl('RRp',names(dat4))])
+ls2<-c(ls2a,ls2b)
+dat5<-data.table(dat4)
+for (x in 1:length(ls2)) {
+  dat5[,(c(v10,v11)[x]):=pmax(rowMeans(.SD,na.rm=T),1,na.rm=T),.SDcols=ls2[[x]]]}
+dat5
+#dat5[,summary(.SD)]
+#test1<-dat5[APT.IET$AGE>4,]
+#test1[sample(1:nrow(test1),10),]
+#test1<-dat5[APT.IET$AGE>18,]
+#test1[sample(1:nrow(test1),10),]
+#test1<-dat5[APT.IET$AGE>19,]
+#test1[sample(1:nrow(test1),10),]
+}
+```
+From random samples of rows, we can verify that this process worked correctly.
+
+Drop the individual age/sex results and also the AGE/SEX variables.
+```{r, eval=F}
+drop.res.fxn<-function() {
+v1<-'Gronlund.2019.EnvironH.allcause.mortality'
+v2<-'Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits'
+v3<-'Winquist.2016.EnvironRes.Renal.ED.visits'
+v4<-'Winquist.2016.EnvironRes.heat_related.ED.visits'
+v5<-'Kingsley.2015.EHP.allcause.ED.visits'
+v6<-'Kingsley.2015.EHP.heat_related.ED.visits'
+v8<-c(v1,v2,v3,v4,v5,v6)
+ls2<-lapply(v8,grep,names(dat4),value=T)
+v1<-names(dat5)[!(names(dat5) %in% c('AGE','SEX',unlist(ls2)))]
+dat5[,..v1]
+}
+```
+
+Run the actual code, looping through each city. Do this for RRan and RRp.
+```{r run-scenarios, results='asis'}
+for (cy in abbrcity) {
+  cat('\n',cy)
+  city<-fullcity[match(cy,abbrcity)] #full city name
+  #Import the demographics, since some of the RRs are by age.
+  v1<-grep(cy,c(fi6,fi7,fi8),value=T)
+  load(paste0(pa2,v1))
+  demos<-get(paste0('demographics.',cy))
+  rm(v1,list=paste0('demographics.',cy))
+  #correct for data sets where Evan used different SEX codes
+  demos[SEX=='F',SEX:=2L] 
+  demos[SEX=='M',SEX:=1L]
+  demos[,SEX:=as.integer(SEX)]
+  #Select all the RRs relevant to the given city.
+  ls1<-RR.APT[grep(city,names(RR.APT))]
+  for (sc in scenarios) {
+    v2<-paste0(pa2,'APT_IET_',sc,'_',city,'.csv')
+    if (!file.exists(v2) | grepl('PowerOff',v2)) next
+    cat(city,sc,'\n')
+    APT.IET<-merge.demos.fxn()
+    dat4<-merge.RR.fxn()
+    if (cy!='PHX') {dat5<-sel.nonmiss.fxn()
+      dat5<-drop.res.fxn()
+      } else dat5<-dat4
+    #to save space, convert the RRs to hundredths (multiply by 100) and convert to integers. don't convert heat-related to integers because the values are too high
+    v12<-names(dat5)[grepl('RR',names(dat5)) & !grepl('heat_related',names(dat5))]
+    v13<-grep('heat_related',names(dat5),value=T)
+    dat5[,(v12):=lapply(.SD,FUN=function(x) {as.integer(round(x*100,0))}),.SDcols=v12]
+    dat5[,(v13):=lapply(.SD,FUN=function(x) {if (max(x,na.rm=T)>(2^31-1)/100) {round(x*100,0)} else as.integer(round(x*100),0)}),.SDcols=v13]
+    fwrite(dat5,paste0(pa2,paste0('RR_',sc,'_',city,'.csv')))
+    rm(APT.IET,dat4,dat5,v2)
+  }
+  rm(ls1,demos)
+}
+```
+
+Look at the results for each city for the control scenario with one of the lowest IETs (PowerOn-Present-NoHW-Control) and one of the highest IETs (PowerRestore-Endofcentury-YesHW-Control). Note that for Detroit, the summary statistics for preterm births for the PowerOn-Present-NoHW-Control scenario among women of child-bearing age with OATan > 22 show max > 1, but these are such a small number of individuals that the quantile function rounds to 1.
+```{r, results='show'}
+for (cy in abbrcity) {
+  city<-fullcity[match(cy,abbrcity)] #full city name
+  for (sc in scenarios[c(20,21)]) {
+    if (grepl('PowerOff',sc)) next
+    if (!file.exists(paste0(pa2,paste0('RR_',sc,'_',city,'.csv')))) next
+    dat5<-fread(paste0(pa2,paste0('RR_',sc,'_',city,'.csv')))
+    cat('\n',city,sc,'\n')
+    dat6<-t(dat5[,lapply(.SD,function(x) {
+      x<-as.numeric(x)
+      c(sum(is.na(x)+!is.na(x)),round(quantile(x/100,c(0,0.25,0.5,0.75,1),na.rm=T),3),round(mean(x/100,na.rm=T),3),sum(is.na(x)))}),
+      .SDcols=grep('RR',names(dat5),value=T)])
+    colnames(dat6)<-c('N','min','1st','median','3rd','max','mean','NAs')
+    print(dat6)
+  }
+}
+```
+ 
+  Atlanta PowerOn_Present_NoHW_Control 
+                                                                    N min  1st median  3rd    max  mean     NAs
+Gasparrini.2015.Lancet.allcause.mortality.RRan                1943950   1 1.00   1.00 1.01   1.10 1.004       0
+Gasparrini.2015.Lancet.allcause.mortality.RRp                 1943950   1 1.00   1.00 1.01   1.16 1.004       0
+Schwartz.2016.EnvironH.allcause.mortality.RRan                1943950   1 1.00   1.00 1.00   1.14 1.004       0
+Schwartz.2016.EnvironH.allcause.mortality.RRp                 1943950   1 1.00   1.00 1.00   1.22 1.004       0
+Nordio.2015.EnvironInt.allcause.mortality.RRan                1943950   1 1.03   1.04 1.04   1.08 1.034  206149
+Nordio.2015.EnvironInt.allcause.mortality.RRp                 1943950   1 1.03   1.04 1.04   1.10 1.035  125860
+Bobb.2014.EHP.allcause.mortality.RRan                         1943950   1 1.00   1.00 1.01   1.09 1.005       0
+Bobb.2014.EHP.allcause.mortality.RRp                          1943950   1 1.00   1.00 1.01   1.13 1.006       0
+Sun.2019.EnvironInt.preterm.birth.RRan                        1943950   1 1.02   1.02 1.02   1.04 1.020 1514640
+Sun.2019.EnvironInt.preterm.birth.RRp                         1943950   1 1.02   1.02 1.02   1.05 1.020 1496151
+meta.allcause.mortality.RRan                                  1943950   1 1.01   1.01 1.02   1.10 1.014       0
+meta.allcause.mortality.RRp                                   1943950   1 1.01   1.01 1.02   1.15 1.015       0
+Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits.RRan 1943950   1 1.00   1.05 1.13   1.91 1.078       0
+Winquist.2016.EnvironRes.Renal.ED.visits.RRan                 1943950   1 1.00   1.00 1.06   1.38 1.032       0
+Winquist.2016.EnvironRes.heat_related.ED.visits.RRan          1943950   1 1.20   2.42 4.87  80.20 3.359       0
+Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits.RRp  1943950   1 1.00   1.05 1.13   2.43 1.085       0
+Winquist.2016.EnvironRes.Renal.ED.visits.RRp                  1943950   1 1.00   1.00 1.06   1.56 1.035       0
+Winquist.2016.EnvironRes.heat_related.ED.visits.RRp           1943950   1 1.70   2.42 4.87 325.36 3.594       0
+
+ Atlanta PowerRestore_Endofcentury_YesHW_Control 
+                                                                    N  min    1st  median      3rd          max        mean     NAs
+Gasparrini.2015.Lancet.allcause.mortality.RRan                1943950 1.00   1.11    1.27     1.39         1.64       1.253       0
+Gasparrini.2015.Lancet.allcause.mortality.RRp                 1943950 1.00   1.10    1.22     1.33         2.21       1.244       0
+Schwartz.2016.EnvironH.allcause.mortality.RRan                1943950 1.00   1.16    1.37     1.54         1.90       1.353       0
+Schwartz.2016.EnvironH.allcause.mortality.RRp                 1943950 1.00   1.14    1.30     1.46         2.78       1.342       0
+Nordio.2015.EnvironInt.allcause.mortality.RRan                1943950 1.02   1.08    1.13     1.17         1.24       1.125     123
+Nordio.2015.EnvironInt.allcause.mortality.RRp                 1943950 1.00   1.08    1.12     1.15         1.37       1.122     839
+Bobb.2014.EHP.allcause.mortality.RRan                         1943950 1.00   1.10    1.21     1.29         1.46       1.196       0
+Bobb.2014.EHP.allcause.mortality.RRp                          1943950 1.00   1.09    1.17     1.25         1.82       1.189       0
+Sun.2019.EnvironInt.preterm.birth.RRan                        1943950 1.01   1.05    1.08     1.10         1.13       1.072 1464364
+Sun.2019.EnvironInt.preterm.birth.RRp                         1943950 1.00   1.05    1.07     1.09         1.20       1.070 1464529
+meta.allcause.mortality.RRan                                  1943950 1.00   1.11    1.23     1.32         1.51       1.220       0
+meta.allcause.mortality.RRp                                   1943950 1.00   1.10    1.20     1.28         1.91       1.212       0
+Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits.RRan 1943950 1.00   1.60    2.91     4.71        12.33       3.365       0
+Winquist.2016.EnvironRes.Renal.ED.visits.RRan                 1943950 1.00   1.06    1.52     2.18         3.53       1.649       0
+Winquist.2016.EnvironRes.heat_related.ED.visits.RRan          1943950 1.00 113.82 3773.14 43756.54   4146430.15   54053.315       0
+Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits.RRp  1943950 1.00   1.53    2.58     3.93        28.62       3.411       0
+Winquist.2016.EnvironRes.Renal.ED.visits.RRp                  1943950 1.00   1.06    1.47     1.93         5.39       1.619       0
+Winquist.2016.EnvironRes.heat_related.ED.visits.RRp           1943950 1.00  80.20 1319.95 15307.25 557640493.70 3217966.439       0
+
+ Detroit PowerOn_Present_NoHW_Control 
+                                                     N min 1st median  3rd  max  mean     NAs
+Gasparrini.2015.Lancet.allcause.mortality.RRan 3489035   1   1   1.00 1.01 2.94 1.017       0
+Gasparrini.2015.Lancet.allcause.mortality.RRp  3489035   1   1   1.00 1.01 5.09 1.019       0
+Schwartz.2016.EnvironH.allcause.mortality.RRan 3489035   1   1   1.00 1.02 1.39 1.021       0
+Schwartz.2016.EnvironH.allcause.mortality.RRp  3489035   1   1   1.00 1.02 1.56 1.022       0
+Nordio.2015.EnvironInt.allcause.mortality.RRan 3489035   1   1   1.14 1.17 1.31 1.109 1399462
+Nordio.2015.EnvironInt.allcause.mortality.RRp  3489035   1   1   1.14 1.17 1.37 1.109 1389201
+Bobb.2014.EHP.allcause.mortality.RRan          3489035   1   1   1.00 1.00 1.09 1.004       0
+Bobb.2014.EHP.allcause.mortality.RRp           3489035   1   1   1.00 1.00 1.13 1.004       0
+Sun.2019.EnvironInt.preterm.birth.RRan         3489035   1   1   1.03 1.03 1.05 1.022 3041607
+Sun.2019.EnvironInt.preterm.birth.RRp          3489035   1   1   1.03 1.03 1.06 1.022 3037350
+meta.allcause.mortality.RRan                   3489035   1   1   1.00 1.06 1.28 1.033       0
+meta.allcause.mortality.RRp                    3489035   1   1   1.00 1.06 1.38 1.033       0
+Gronlund.2019.EnvironH.allcause.mortality.RRan 3489035   1   1   1.00 1.00 2.33 1.013       0
+Kingsley.2015.EHP.allcause.ED.visits.RRan      3489035   1   1   1.00 1.00 1.17 1.002       0
+Kingsley.2015.EHP.heat_related.ED.visits.RRan  3489035   1   1   1.00 1.00 3.47 1.091       0
+Gronlund.2019.EnvironH.allcause.mortality.RRp  3489035   1   1   1.00 1.00 3.26 1.013       0
+Kingsley.2015.EHP.allcause.ED.visits.RRp       3489035   1   1   1.00 1.00 1.23 1.002       0
+Kingsley.2015.EHP.heat_related.ED.visits.RRp   3489035   1   1   1.00 1.00 5.30 1.094       0
+
+ Detroit PowerRestore_Endofcentury_YesHW_Control 
+                                                     N  min  1st median   3rd    max   mean     NAs
+Gasparrini.2015.Lancet.allcause.mortality.RRan 3489035 1.24 5.68   8.82 13.69  45.86 11.011       0
+Gasparrini.2015.Lancet.allcause.mortality.RRp  3489035 1.24 5.68   8.82 13.69 191.38 11.592       0
+Schwartz.2016.EnvironH.allcause.mortality.RRan 3489035 1.15 1.60   1.76  1.93   2.50  1.758       0
+Schwartz.2016.EnvironH.allcause.mortality.RRp  3489035 1.15 1.60   1.76  1.93   3.40  1.768       0
+Nordio.2015.EnvironInt.allcause.mortality.RRan 3489035 1.20 1.39   1.45  1.51   1.68  1.441       0
+Nordio.2015.EnvironInt.allcause.mortality.RRp  3489035 1.20 1.39   1.45  1.51   1.92  1.444       0
+Bobb.2014.EHP.allcause.mortality.RRan          3489035 1.04 1.14   1.17  1.21   1.30  1.169       0
+Bobb.2014.EHP.allcause.mortality.RRp           3489035 1.04 1.14   1.17  1.21   1.42  1.171       0
+Sun.2019.EnvironInt.preterm.birth.RRan         3489035 1.04 1.07   1.08  1.09   1.11  1.079 2741660
+Sun.2019.EnvironInt.preterm.birth.RRp          3489035 1.04 1.07   1.08  1.09   1.14  1.079 2741660
+meta.allcause.mortality.RRan                   3489035 1.14 1.40   1.49  1.58   1.85  1.481       0
+meta.allcause.mortality.RRp                    3489035 1.14 1.40   1.49  1.58   2.24  1.486       0
+Gronlund.2019.EnvironH.allcause.mortality.RRan 3489035 1.00 1.00   1.37  2.49  12.45  2.165       0
+Kingsley.2015.EHP.allcause.ED.visits.RRan      3489035 1.00 1.00   1.00  1.00   1.51  1.033       0
+Kingsley.2015.EHP.heat_related.ED.visits.RRan  3489035 1.00 1.00   3.77  9.62  31.68  6.249       0
+Gronlund.2019.EnvironH.allcause.mortality.RRp  3489035 1.00 1.00   1.37  2.52  24.35  2.184       0
+Kingsley.2015.EHP.allcause.ED.visits.RRp       3489035 1.00 1.00   1.00  1.00   1.67  1.034       0
+Kingsley.2015.EHP.heat_related.ED.visits.RRp   3489035 1.00 1.00   3.77  9.62  95.79  6.388       0
+
+ Phoenix PowerOn_Present_NoHW_Control 
+                                                                           N min  1st median  3rd    max  mean     NAs
+Gasparrini.2015.Lancet.allcause.mortality.RRan                       6989360   1 1.00   1.00 1.00   1.56 1.001       0
+Gasparrini.2015.Lancet.allcause.mortality.RRp                        6989360   1 1.00   1.00 1.00   1.83 1.001       0
+Schwartz.2016.EnvironH.allcause.mortality.RRan                       6989360   1 1.00   1.01 1.02   1.05 1.011       0
+Schwartz.2016.EnvironH.allcause.mortality.RRp                        6989360   1 1.00   1.01 1.02   1.06 1.011       0
+Nordio.2015.EnvironInt.allcause.mortality.RRan                       6989360   1 1.03   1.05 1.07   1.14 1.047       0
+Nordio.2015.EnvironInt.allcause.mortality.RRp                        6989360   1 1.03   1.05 1.07   1.16 1.046       0
+Bobb.2014.EHP.allcause.mortality.RRan                                6989360   1 1.00   1.00 1.00   1.01 1.000       0
+Bobb.2014.EHP.allcause.mortality.RRp                                 6989360   1 1.00   1.00 1.00   1.02 1.000       0
+Petitti.2016.EHP.heat_related.mortality.RRan                         6989360   1 1.00   1.00 1.55 196.00 1.288       0
+Petitti.2016.EHP.heat_related.mortality.RRp                          6989360   1 1.00   1.00 1.55 733.36 1.316       0
+Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality.RRan 6989360   1 1.00   1.00 1.05   1.74 1.019       0
+Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality.RRp  6989360   1 1.00   1.00 1.05   2.00 1.020       0
+Petitti.2016.EHP.allcause.mortality.RRan                             6989360   1 1.00   1.00 1.00   1.14 1.001       0
+Petitti.2016.EHP.allcause.mortality.RRp                              6989360   1 1.00   1.00 1.00   1.18 1.001       0
+Petitti.2016.EHP.heat_related.ED.visits.RRan                         6989360   1 1.00   1.00 1.43  10.24 1.180       0
+Petitti.2016.EHP.heat_related.ED.visits.RRp                          6989360   1 1.00   1.00 1.43  17.52 1.183       0
+Sun.2019.EnvironInt.preterm.birth.RRan                               6989360   1 1.03   1.04 1.05   1.09 1.037 5451195
+Sun.2019.EnvironInt.preterm.birth.RRp                                6989360   1 1.03   1.04 1.05   1.10 1.036 5451195
+meta.allcause.mortality.RRan                                         6989360   1 1.00   1.00 1.01   1.28 1.005       0
+meta.allcause.mortality.RRp                                          6989360   1 1.00   1.00 1.01   1.40 1.005       0
+|--------------------------------------------------|
+|==================================================|
+
+ Phoenix PowerRestore_Endofcentury_YesHW_Control 
+                                                                           N min    1st   median       3rd          max         mean     NAs
+Gasparrini.2015.Lancet.allcause.mortality.RRan                       6989360   1   1.64    11.42     33.54 1.289600e+02 1.982100e+01       0
+Gasparrini.2015.Lancet.allcause.mortality.RRp                        6989360   1   1.64     8.26     37.35 2.780010e+03 4.151600e+01       0
+Schwartz.2016.EnvironH.allcause.mortality.RRan                       6989360   1   1.06     1.18      1.25 1.350000e+00 1.154000e+00       0
+Schwartz.2016.EnvironH.allcause.mortality.RRp                        6989360   1   1.06     1.16      1.26 1.600000e+00 1.164000e+00       0
+Nordio.2015.EnvironInt.allcause.mortality.RRan                       6989360   1   1.15     1.42      1.61 1.870000e+00 1.379000e+00       0
+Nordio.2015.EnvironInt.allcause.mortality.RRp                        6989360   1   1.15     1.37      1.63 2.630000e+00 1.408000e+00       0
+Bobb.2014.EHP.allcause.mortality.RRan                                6989360   1   1.01     1.05      1.08 1.110000e+00 1.047000e+00       0
+Bobb.2014.EHP.allcause.mortality.RRp                                 6989360   1   1.01     1.05      1.08 1.180000e+00 1.050000e+00       0
+Petitti.2016.EHP.heat_related.mortality.RRan                         6989360   1 304.28 10267.11  10267.11 1.026711e+04 6.899831e+03       0
+Petitti.2016.EHP.heat_related.mortality.RRp                          6989360   1 304.28 10267.11  10267.11 1.026711e+04 7.066549e+03       0
+Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality.RRan 6989360   1   1.82     9.65     24.36 7.744000e+01 1.433900e+01       0
+Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality.RRp  6989360   1   1.82     7.31     26.72 1.082540e+03 2.509900e+01       0
+Petitti.2016.EHP.allcause.mortality.RRan                             6989360   1   1.15     1.75      2.21 2.960000e+00 1.700000e+00       0
+Petitti.2016.EHP.allcause.mortality.RRp                              6989360   1   1.15     1.63      2.26 5.740000e+00 1.792000e+00       0
+Petitti.2016.EHP.heat_related.ED.visits.RRan                         6989360   1  12.25  7694.85 275854.74 2.419806e+07 4.165128e+05       0
+Petitti.2016.EHP.heat_related.ED.visits.RRp                          6989360   1  12.25  2629.40 394573.99 6.517019e+11 1.555049e+08       0
+Sun.2019.EnvironInt.preterm.birth.RRan                               6989360   1   1.10     1.30      1.42 1.590000e+00 1.266000e+00 5451195
+Sun.2019.EnvironInt.preterm.birth.RRp                                6989360   1   1.10     1.26      1.42 1.810000e+00 1.274000e+00 5451195
+meta.allcause.mortality.RRan                                         6989360   1   1.32     3.79      6.82 1.420000e+01 4.272000e+00       0
+meta.allcause.mortality.RRp                                          6989360   1   1.32     3.18      7.23 7.557000e+01 5.446000e+00       0
+
+Histograms of RRan from Gasparrini for PowerOn_Present_YesHW_Control for each city:
+```{r, results='show'}
+par(mfrow=c(2,2))
+for (cy in abbrcity) {
+  city<-fullcity[match(cy,abbrcity)] #full city name
+  state<-c('GA','MI','AZ')[match(cy,abbrcity)]
+  for (sc in scenarios[c(17)]) {
+    dat5<-fread(paste0(pa2,paste0('RR_',sc,'_',city,'.csv')))
+    v4<-APT.daily[[cy]][date %in% dat5[,unique(as.Date(date))],max(tempC_mean,na.rm=T)]
+    v3<-APT.daily[[cy]][tempC_mean==v4,date]
+    v1<-round(dat5[date==min(date),exp(mean(log(Gasparrini.2015.Lancet.allcause.mortality.RRan/100)))],1)
+    v2<-round(dat5[date==min(date),mean(OATan)],1)
+    dat6<-dat5[date==v3,hist(Gasparrini.2015.Lancet.allcause.mortality.RRan/100,plot=F)]
+    plot(dat6,xlab='RR',main='',cex.lab=1.4)
+    text(x=mean(dat6$mids),y=max(dat6$counts),labels=paste0(city,', ',state,'\n',v3,'\n CAT = ',round(v4,1),' deg. C'),adj=c(0.5,1),cex=1.4)
+  }
+}
+```
+

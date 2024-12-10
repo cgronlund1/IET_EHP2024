@@ -1,0 +1,356 @@
+---
+title: "Modeling Indoor Heat Health Impacts, Step 3a, Atlanta"
+author: "Carina Gronlund"
+date: "March 21, 2022"
+output:
+  html_notebook:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r chunk setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, results='hide',cache=F)
+```
+
+Load necessary libraries and establish path and file names.
+```{r chunk libs}
+library(DiagrammeR) #see https://rich-iannone.github.io/DiagrammeR/graphviz_and_mermaid.html
+library(data.table)
+library(rnoaa)
+library(curl)
+library(nlme)
+library(sandwich)
+library(car)
+
+source('C:\\Users\\gronlund\\Dropbox (University of Michigan)\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R')
+
+load(paste0(pa2,fi2))
+```
+
+#Step 3a: Regress IET.daily on OAT.daily to get IET fitted values for each OAT temperature.
+In this step, we estimate what an equivalent IET would be for any given OAT, or *outdoor analog temperature*, based on the historic relationship between airport temperature and IET when power is on. In turn, we can eventually use the one-to-one relationship between airport temperature and risk of mortality (or hospitalization, ED visit, or preterm birth) to estimate the risk for any given IET. Note that for occupation (OCC), 1 = indoor; 2 = outdoor; 3 = unemployed, and unemployed includes all children under 5 and adults 65 and older, while the remaining codes were derived using PUMS data and logistic regression (see SPD_Dictionary.pdf).
+
+##Set up the data set.
+
+First, recreate the merged IETs and characteristics file.
+```{r chunk 3.1}
+load(paste0(pa2,fi6))
+load(paste0(pa2,fi41))
+#v1<-rep(demographics.ATL$OBJECT_ID,10)
+#dat4<-cbind(IET.daily.historic.ATL[order(v1),],demographics.ATL[,.(PERSON_ID,AGE,AC_STATUS,EP_CLASS,HH_INCOME,OCC,SEX,GRID_2010_L2)])
+dat4<-merge(IET.daily.historic.ATL[!is.na(IET.mean),.(date,PERSON_ID,IET.mean)],demographics.ATL[,.(PERSON_ID,AGE,AC_STATUS,EP_CLASS,HH_INCOME,OCC,SEX,GRID_2010_L2)],by='PERSON_ID',all.x=T)
+```
+IET ranges from 21.5-31.5 C.
+
+Merge in airport temperature.
+```{r chunk 3.2}
+dat4[,date:=as.Date(date)] #convert dat4$date to a date class
+dat4<-merge(dat4,APT.daily[['ATL']][,.(date,tempC_mean)],by='date',all.x=T)
+```
+tempC_mean ranges from 21.2 to 31.4 C.
+
+Order dat4 in a consistent way so that the output from the models can be matched to their respective rows in dat4.
+```{r chunk 3.4}
+dat4<-dat4[order(PERSON_ID,date),]
+```
+
+Convert IET.mean from tenths of degrees Fahrenheit to Celsius.
+```{r chunk 3.4b}
+dat4[,IETmean:=(IET.mean/10-32)/1.8]
+```
+
+Clean up to save space.
+```{r clean1}
+rm(demographics.ATL,IET.daily.historic.ATL)
+```
+
+##Model 4
+See previous code for models 1-3, which were much more complicated.
+
+Regress daily mean IET on daily mean airport temperature (tempC_mean) overall.
+```{r chunk 3.5, results='show'}
+mod4.ATL.overall<-lm(IETmean~tempC_mean, data=dat4)
+```
+
+Look at results.
+```{r mod4-results,results='show'}
+summary(mod4.ATL.overall)
+cat('\ncorrelation:',dat4[,cor(IETmean,tempC_mean)])
+cat('\nAIC:',AIC(mod4.ATL.overall))
+rm(mod4.ATL.overall)
+```
+Call:
+lm(formula = IETmean ~ tempC_mean, data = dat4)
+
+Residuals:
+    Min      1Q  Median      3Q     Max 
+-3.8199 -1.0888 -0.1513  0.7946  7.3536 
+
+Coefficients:
+             Estimate Std. Error t value Pr(>|t|)    
+(Intercept) 15.081981   0.007403    2037   <2e-16 ***
+tempC_mean   0.347161   0.000261    1330   <2e-16 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 1.439 on 3887898 degrees of freedom
+Multiple R-squared:  0.3128,	Adjusted R-squared:  0.3128 
+F-statistic: 1.769e+06 on 1 and 3887898 DF,  p-value: < 2.2e-16
+
+
+correlation: 0.5592456
+AIC: 13860784
+
+R^2 is 0.31. The coefficient is 0.347, which means that for each degree C increase in outdoor temperature, indoor temperature increases by 0.347 degrees, on average.
+The correlation among IET and airport temperature is 0.56.
+
+Regress daily mean IET and daily mean airport temperature (tempC_mean) overall with a random intercept per person.
+
+```{r chunk 3.5a, results='show'}
+start<-Sys.time()
+mod4.ATL.rint<-lme(IETmean~tempC_mean, random=~1|PERSON_ID,data=dat4,keep.data=F)
+end<-Sys.time()
+```
+This took 1.6 minutes to run.
+
+Look at results for this model.
+```{r chunk 3.5v, results='show'}
+summary(mod4.ATL.rint)
+cat('\nICC:',ICC.fxn(mod4.ATL.rint))
+```
+The standard deviation of the residuals (sigma) is low (1.08 C) while that of the random intercepts (tau) is higher (0.948). The ICC is much greater than 0 (0.43), so the standard errors will be mis-estimated without accounting for within-person correlation. The AIC is 12485035.
+
+##Model 5
+What are the major drivers of IET in these models: AGE vs. AC_STATUS vs. EP_CLASS vs. HH_INCOME vs. OCC vs. SEX?
+
+First, standardize variables in the data set and create a housing class variable.
+```{r chunk 3.30}
+dat5<-varDeriv.fxn.ATL(dat4)
+dat5[,c('AGE','AC_STATUS','EP_CLASS','OCC','SEX','tempC_mean','IET.mean'):=NULL]
+#rm(dat4)
+```
+
+Then, perform linear regression of standardized IET.mean on standardized airport temperature and each variable as well as interactions with airport temperature.
+```{r chunk 3.31}
+mod5.ATL<-lm(IETmeanS~APTmeanS*(ageS+age2+lnIncomeS+lnIncome2+maleS+OCC2+OCC3+PAC+NAC+MF_06N+MF_06S+MF_12N+MF_12S+SF2M+SF2NM+SFM), data=dat5)
+```
+
+Look at model results.
+```{r chunk 3.32, results='show'}
+summary(mod5.ATL)
+cat('AIC:',AIC(mod5.ATL))
+```
+This AIC of 4840784 is lower than for the random intercept model, so there is something gained by including these terms.
+
+Save the model results.
+```{r chunk lm-save}
+#models.ATL<-list()
+models.ATL[['coef.lm.scaled']]<-coef(mod5.ATL)
+models.ATL[['vcov.lm.scaled']]<-vcov(mod5.ATL)
+save(models.ATL,file=paste0(pa2,fi44))
+```
+
+
+What are the variance inflation factors for this model?
+```{r chunk 3.35, results='show'}
+vif(mod5.ATL)
+```
+The VIFs are all less than 5 and definitely less than 10, so we do not have concerns about multi-collinearity here.
+
+Model with sandwich (robust) errors.
+```{r chunk 42, results='show'}
+se.lm<-sqrt(diag(sandwich(mod5.ATL)))
+dat1<-data.frame(coef=coef(mod5.ATL),SE=se.lm)
+dat1$t<-dat1$coef/dat1$SE
+dat1$p<-2*pnorm(abs(dat1$t),lower.tail=F)
+dat1
+```
+All were significant, except APTmeanS:OCC3, which is consistent with the regular linear regression standard errors. Because the interaction of this coefficient with APTmeanS is significant, this coefficient will be retained in either case. As in the Phoenix and Detroit models, air conditioning and income are operating in the direction opposite to that hypothesized.
+
+How does the random effects model compare with the regular model? Note: this model took 5 minutes to run.
+```{r chunk 39, results='show'}
+start.time<-Sys.time()
+mod5.ATL.re<-lme(IETmeanS~APTmeanS*(ageS+age2+lnIncomeS+lnIncome2+maleS+OCC2+OCC3+PAC+NAC+MF),random=~1|PERSON_ID,keep.data=F,data=dat5)
+end.time<-Sys.time()
+summary(mod5.ATL.re)
+```
+The slope for the OCC3 term is not significant. The AIC of 3680576 is smaller than that for previous models.
+
+Run a model that does not include AC, which was modeled using many of the other variables in the model, or grid, which is not useful for predictions outside of this study.
+```{r chunk-mod10-reduced, results='show'}
+mod5.10<-lm(IETmeanS~APTmeanS*(ageS+age2+lnIncomeS+lnIncome2+maleS+OCC2+OCC3+MF), data=dat5)
+summary(mod5.10)
+AIC(mod5.10)
+```
+The AIC is 4944268, which is higher than the regular linear model that included AC and multiple housing types. Even without AC, income is still in the unexpected direction. Occupation, income, and multi-family housing are the biggest drivers of slope in Atlanta.
+
+Save the model results.
+```{r chunk lm-save-simple}
+#models.ATL<-list()
+models.ATL[['coef.lm.reduced.scaled']]<-coef(mod5.10)
+models.ATL[['vcov.lm.reduced.scaled']]<-vcov(mod5.10)
+save(models.ATL,file=paste0(pa2,fi44))
+```
+
+Try a random intercept model with an even more reduced model omitting both age and air conditioning, consistent with the terms in the Phoenix model. This took 3 minutes to run.
+```{r mod-ran-int-reduced-more}
+start.time<-Sys.time()
+mod5.12<-lme(IETmeanS~APTmeanS*(lnIncomeS+lnIncome2+maleS+OCC2+OCC3+MF), random=~1|PERSON_ID, data=dat5)
+end.time<-Sys.time()
+```
+
+Look at results.
+```{r chunk-mod-ran-int-summary, results='show'}
+summary(mod5.12)
+```
+The AIC is 3690501, which is lower than all previous models. The variables are all highly significant. Now that age is removed from the model, OCC3 is highly significant. For income, for those above \$58,000, IET increases more quickly for each deg C of APT than for those at the mean. For those below \$58,000, IET increases more slowly with each degree of C, i.e., the total slope is less than 0.34. This is counter-intuitive, as we would expect those with higher incomes to be less affected by outdoor temperature. Nevertheless, occupation is in the expected direction, with outdoor workers' IETs rising more quickly with rising APT. Income may be most strongly correlated with one's ability to leave the home in Atlanta rather than AC usage or access to cool spaces.
+
+Save the model results.
+```{r chunk lm-save-ran.int}
+#models.ATL<-list()
+models.ATL[['coef.lm.reduced.rint.scaled']]<-mod5.12$coefficients$fixed
+models.ATL[['vcov.lm.reduced.rint.scaled']]<-mod5.12$varFix
+models.ATL[['rint.lm.reduced.rint.scaled']]<-setNames(mod5.12$coefficients$random$PERSON_ID,row.names(mod5.12$coefficients$random$PERSON_ID))
+models.ATL[['tau.sigma.lm.reduced.rint.scaled']]<-exp(attributes(mod5.12$apVar)$Par) #note that the tau (random effects) and sigma (residuals) SDs were computed on the log(sd) scale (see https://stats.idre.ucla.edu/r/faq/how-can-i-calculate-standard-errors-for-variance-components-from-mixed-models/)
+save(models.ATL,file=paste0(pa2,fi44))
+```
+
+Try a random intercept model with the housing terms. This took 6 minutes to run. Note: the previous models didn't have all the housing types. These were not rerun when this error was discovered--only the model that went into the
+```{r mod-ran-int-reduced-housing}
+start.time<-Sys.time()
+mod5.13<-lme(IETmeanS~APTmeanS*(lnIncomeS+lnIncome2+maleS+OCC2+OCC3+MF_06N+MF_06S+MF_12N+MF_12S+SF2M+SF2M_B+SF2M_S+SF2M_SB+SF2NM+SF2NM_B+SF2NM_S+SF2NM_SB+SFM+SFM_S+SFNM_S), random=~1|PERSON_ID, data=dat5)
+end.time<-Sys.time()
+```
+
+Look at results.
+```{r chunk-mod-ran-int-summary-housing, results='show'}
+summary(mod5.13)
+```
+The AIC is 3588060, which is lower than all previous models. The variables are all highly significant. Now that age is removed from the model, OCC3 is highly significant. For income, for those above \$58,000, IET increases more quickly for each deg C of APT than for those at the mean. For those below \$58,000, IET increases more slowly with each degree of C. This is counter-intuitive, as we would expect those with higher incomes to be less affected by outdoor temperature. Nevertheless, occupation is in the expected direction, with outdoor workers' IETs rising more quickly with rising APT. Income may be most strongly correlated with one's ability to leave the home in Atlanta rather than AC usage or access to cool spaces.
+
+Save the model results.
+```{r chunk lm-save-ran.int-housing}
+#models.ATL<-list()
+models.ATL[['coef.lm.reduced.housing.rint.scaled']]<-mod5.13$coefficients$fixed
+models.ATL[['vcov.lm.reduced.housing.rint.scaled']]<-mod5.13$varFix
+models.ATL[['rint.lm.reduced.housing.rint.scaled']]<-setNames(mod5.13$coefficients$random$PERSON_ID,row.names(mod5.13$coefficients$random$PERSON_ID))
+models.ATL[['tau.sigma.lm.reduced.housing.rint.scaled']]<-exp(attributes(mod5.13$apVar)$Par)
+save(models.ATL,file=paste0(pa2,fi44))
+```
+
+Collapse the housing categories as follows based on phone call with Brian 21-11-19: shaded SF 1 story, unshaded SF 1 story, shaded SF 2 story, unshaded SF 2 story, MF for Atlanta. Note that adding the mean-centered variables together creates a new mean-centered variable, because 1-a/T + 0-b/T = 1-(a+b)/T, 0-a/T + 1-b/T = 1-(a+b)/T, and 0-a/T + 0-b/T = 0-(a+b)/T. Because no women have outdoor occupations in this data set, we create male-indoor, female-indoor (reference), outdoor, male-unemployed, and female-unemployed categories.
+
+```{r collapse-housing}
+dat5<-varDeriv.fxn2.ATL(dat5)
+```
+
+Try a random intercept model with the reduced housing terms. SF is the reference category for housing. This took 6 minutes to run.
+```{r chunk-mod-ran-int-reduced-redhousing}
+start.time<-Sys.time()
+mod5.14<-lme(IETmeanS~APTmeanS*(lnIncomeS+lnIncome2+male_OCC1+OCC2+male_OCC3+female_OCC3+MF+SF_S+SF2_S+SF2+PAC+NAC), random=~1|PERSON_ID, data=dat5)
+end.time<-Sys.time()
+```
+
+Look at results.
+```{r chunk-mod-ran-int-summary-redhousing, results='show'}
+summary(mod5.14)
+```
+The AIC is 3660548, which is higher than the previous model. For the variables that were not changed, values are similar. Lack of AC continues to be protective. Following email from Brian on 3/25/22, it seems that lack of AC is probably not protective at night, and therefore, this model is obscuring day and night effects by using mean IET.
+
+Save the model results.
+```{r chunk-lm-save-ranint-redhousing}
+models.ATL[['coef.lm.reduced.redhousing.rint.scaled']]<-mod5.14$coefficients$fixed
+models.ATL[['vcov.lm.reduced.redhousing.rint.scaled']]<-mod5.14$varFix
+models.ATL[['rint.lm.reduced.redhousing.rint.scaled']]<-setNames(mod5.14$coefficients$random$PERSON_ID,row.names(mod5.14$coefficients$random$PERSON_ID))
+models.ATL[['tau.sigma.lm.reduced.redhousing.rint.scaled']]<-exp(attributes(mod5.14$apVar)$Par)
+save(models.ATL,file=paste0(pa2,fi44))
+```
+
+Code for looking at cell sizes.
+```{r}
+mat1<-matrix(1:25,5,5,dimnames=list(c('male_OCC1','female_OCC1','OCC2','male_OCC3','female_OCC3'),c('MF','SF','SF_S','SF2_S','SF2')))
+dat5[male_OCC1<0 & OCC2<0 & male_OCC3<0 & female_OCC3<0,female_OCC1:=1]
+for (i in 1:25) {
+  v2<-unlist(lapply(1:2,FUN=function(x) {dimnames(mat1)[[x]][which(mat1==i,arr.ind=T)[,x]]})) #row and column names
+  mat1[i]<-dat5[get(v2[1])>0 & get(v2[2]) > 0,.N]/10
+}
+```
+
+Try a random intercept model with the reduced housing terms and no AC terms. SF is the reference category for housing. This took 6 minutes to run. Note that this only converges with mean-centered indicators.
+```{r chunk-mod-ran-int-reduced-redhousing-noAC}
+start.time<-Sys.time()
+mod5.15<-lme(IETmeanS~APTmeanS*(inclt15+inc15_30+inc30_50+inc50_75+male_OCC1+OCC2+male_OCC3+female_OCC3+MF+SF_S+SF2_S+SF2), random=~1|PERSON_ID, data=dat5)
+end.time<-Sys.time()
+```
+
+Look at results.
+```{r chunk-mod-ran-int-summary-redhousing-noAC, results='show'}
+summary(mod5.15)
+```
+
+Save the model results.
+```{r chunk-lm-save-ranint-redhousing-noAC}
+models.ATL[['coef.lm.inccat.redhousing.noAC.rint.scaled']]<-mod5.15$coefficients$fixed
+models.ATL[['vcov.lm.inccat.redhousing.noAC.rint.scaled']]<-mod5.15$varFix
+models.ATL[['rint.lm.inccat.redhousing.noAC.rint.scaled']]<-setNames(mod5.15$coefficients$random$PERSON_ID,row.names(mod5.15$coefficients$random$PERSON_ID))
+models.ATL[['tau.sigma.lm.inccat.redhousing.noAC.rint.scaled']]<-exp(attributes(mod5.15$apVar)$Par)
+save(models.ATL,file=paste0(pa2,fi44))
+```
+
+Given the low tau, re-run as lm.
+```{r}
+start.time<-Sys.time()
+mod5.16<-lm(IETmeanS~APTmeanS*(inclt15+inc15_30+inc30_50+inc50_75+male_OCC1+OCC2+male_OCC3+female_OCC3+MF+SF_S+SF2_S+SF2), data=dat5)
+end.time<-Sys.time()
+summary(mod5.16)
+AIC(mod5.16)
+```
+Call:
+lm(formula = IETmeanS ~ APTmeanS * (inclt15 + inc15_30 + inc30_50 + 
+    inc50_75 + male_OCC1 + OCC2 + male_OCC3 + female_OCC3 + MF + 
+    SF_S + SF2_S + SF2), data = dat5)
+
+Residuals:
+     Min       1Q   Median       3Q      Max 
+-1.47490 -0.33869 -0.06345  0.25793  2.48294 
+
+Coefficients:
+                       Estimate Std. Error  t value Pr(>|t|)    
+(Intercept)          -0.0911700  0.0002930 -311.193   <2e-16 ***
+APTmeanS              0.3125905  0.0003134  997.393   <2e-16 ***
+inclt15              -0.1214744  0.0007107 -170.929   <2e-16 ***
+inc15_30             -0.1177611  0.0007641 -154.121   <2e-16 ***
+inc30_50             -0.0949317  0.0007194 -131.956   <2e-16 ***
+inc50_75             -0.0778242  0.0007382 -105.431   <2e-16 ***
+male_OCC1            -0.0049228  0.0005749   -8.564   <2e-16 ***
+OCC2                  0.0353087  0.0008441   41.828   <2e-16 ***
+male_OCC3             0.0301860  0.0009345   32.302   <2e-16 ***
+female_OCC3           0.0325682  0.0008445   38.567   <2e-16 ***
+MF                    0.1949910  0.0005112  381.411   <2e-16 ***
+SF_S                 -0.0530186  0.0008254  -64.235   <2e-16 ***
+SF2_S                 0.0001839  0.0016792    0.109    0.913    
+SF2                   0.0206784  0.0013012   15.891   <2e-16 ***
+APTmeanS:inclt15     -0.1624009  0.0007602 -213.615   <2e-16 ***
+APTmeanS:inc15_30    -0.1586492  0.0008174 -194.094   <2e-16 ***
+APTmeanS:inc30_50    -0.1283988  0.0007696 -166.836   <2e-16 ***
+APTmeanS:inc50_75    -0.0963211  0.0007897 -121.979   <2e-16 ***
+APTmeanS:male_OCC1   -0.0076502  0.0006150  -12.440   <2e-16 ***
+APTmeanS:OCC2         0.0248848  0.0009030   27.557   <2e-16 ***
+APTmeanS:male_OCC3    0.0157654  0.0009997   15.770   <2e-16 ***
+APTmeanS:female_OCC3  0.0236894  0.0009034   26.224   <2e-16 ***
+APTmeanS:MF           0.0790619  0.0005469  144.563   <2e-16 ***
+APTmeanS:SF_S        -0.0139308  0.0008830  -15.777   <2e-16 ***
+APTmeanS:SF2_S        0.0197780  0.0017963   11.010   <2e-16 ***
+APTmeanS:SF2         -0.0630043  0.0013920  -45.261   <2e-16 ***
+---
+Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+
+Residual standard error: 0.4593 on 3887874 degrees of freedom
+Multiple R-squared:  0.3696,	Adjusted R-squared:  0.3696 
+F-statistic: 9.116e+04 on 25 and 3887874 DF,  p-value: < 2.2e-16
+
+AIC: 4982789
+
+R^2 is 0.37, so model is slightly improved by adding demographic and housing terms compared to the base model. AIC is vastly improved (64% lower).
+

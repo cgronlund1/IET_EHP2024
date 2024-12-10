@@ -1,0 +1,147 @@
+---
+title: "Modeling Indoor Heat Health Impacts, Step 3b Assign Analog Temperatures to Person-Days"
+author: "Carina Gronlund"
+date: "March 21, 2022"
+output:
+  html_notebook:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r chunk setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T, results='hide',cache=F)
+```
+
+Libraries and master workspace.
+```{r libs, eval=T}
+library(data.table)
+source('C:\\Users\\gronlund\\Box Sync\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R', local = knitr::knit_global())
+load(paste0(pa2,fi2))
+```
+
+#Step 3b: Analog Temperatures to each Person-Day's IET
+
+Here we rearrange the regression equation from each city to estimate analog outdoor ambient temperature for every given IET and person. The rearrangement is as follows:
+
+$[IET_{pd}]=\beta_0+\pmb{\beta_1X_{pd}}+\beta_2OAT_{pd}+\pmb{\beta_3}(OAT_{pd}\times\pmb{X_{pd}})$ Eq. 1
+
+where p indexes persons, d indexes days, [IET] is the expected individually experienced temperature, OAT is the outdoor ambient temperature, $\pmb{X}$ is the vector of individual characteristics (age, income, gender, occupation, housing), $\gamma$ is the person-specific intercept, and bolded characters represent vectors. Note that we estimate [IET] as IET, thereby disregarding the residuals.
+
+Re-distributing the OAT main effect and interaction terms, we get:
+
+$[IET_{pd}]=\beta_0+\pmb{\beta_1X_{pd}}+OAT_{pd}\beta_2+OAT_{pd}(\pmb{\beta_3X_{pd}})$
+$[IET_{pd}]=\beta_0+\pmb{\beta_1X_{pd}}+OAT_{pd}(\beta_2+\pmb{\beta_3X_{pd}})$
+
+Collecting non-OAT terms on the IET side,
+
+$OAT_{pd}(\beta_2+\pmb{\beta_3X_{pd}})=[IET_{pd}]-\beta_0-\pmb{\beta_1X_{pd}}$
+
+Then OAT for each person-day is:
+
+$[OAT_{pd}]=\frac{[IET_{pd}]-\beta_0-\pmb{\beta_1X_{pd}}}{\beta_2+\pmb{\beta_3X_{pd}}}$
+
+This is the predicted OAT, or outdoor temperature that would be equivalent to an IET for a given person on that day if they had experienced that IET in the corresponding time period ("present-day" heat wave time period chosen for this study). 
+
+We can further estimate what the *difference* between predicted OAT and the OAT at the minimum mortality (or morbidity) temperature would be as:
+
+$[OAT_{pd}]-OAT_{MMT}=\frac{[IET_{pd}]-\beta_0-\pmb{\beta_1X_{pd}}}{\beta_2+\pmb{\beta_3X_{pd}}}-OAT_{MMT}$
+
+If we estimate $OAT_{MMT}$ for each person ($[OAT_{pMMT}]$) and estimate $IET_{pMMT}$ for each person ($[IET_{pMMT}]$) using Eq 1, this can also be thought of as:
+
+$[OAT_{pd}]-[OAT_{pMMT}]=\frac{[IET_{pd}]-\beta_0-\pmb{\beta_1X_{pd}}}{\beta_2+\pmb{\beta_3X_{pd}}}-\frac{[IET_{p MMT}]-\beta_0-\pmb{\beta_1X_{pd}}}{\beta_2+\pmb{\beta_3X_{pd}}}$
+
+and therefore
+
+$[OAT_{pd}]-[OAT_{pMMT}]=\frac{[IET_{pd}]-[IET_{pMMT}]}{\beta_2+\pmb{\beta_3X_{pd}}}$
+
+We will call $[IET_{pd}]-[IET_{pMMT}]$ and $[OAT_{pd}]-OAT_{pMMT}$ excess IET and excess predicted OAT, respectively. If we were to assign RR based on this excess OAT, we would assume no effect modification and that everyone has the same RR for a given day's excess OAT, even if they have very different excess IETs. It assumes that everyone is identically adapted to their personal rate of change of the RR with OAT, so that someone whose IET rises quickly with OAT experiences the same RR for change in OAT as someone whose IET rises slowly with OAT.
+
+We then force the ratio of the excess IET and excess OAT to be the same for everyone, or set $\beta_3$ to zero. Then,
+
+$[OATan_{pd}]-OAT_{pMMT}=\frac{[IET_{pd}]-\beta_0-\pmb{\beta_1X_{pd}}}{\beta_2}-OAT_{pMMT}$
+
+This can also be thought of as:
+
+$[OATan_{pd}]-[OAT_{pMMT}]=\frac{[IET_{pd}]-[IET_{pMMT}]}{\beta_2}$
+
+
+We will call this excess analog OAT. This is the same as saying that the excess predicted OAT is the average of the excess IETs, divided by an excess IET-to-OAT conversion factor {\beta_2}, and defines the excess analog OAT as the excess OAT that a person would have experienced at a given excess IET if everyone had exactly the same increase in IET for every 1-unit increase in OAT. Because the Xs are all mean-centered, {\beta_2} is the average increase in IET for a 1-unit increase in OAT. Then, $\pmb{\beta_3X_{pd}}$ can be thought of as the factors that pull everyone's individual excess analog OAT value back to the mean excess analog OAT. If we assume that lnRR for a given analog OAT is the mean lnRR across the population and that individual differences in lnRR from the mean are driven entirely by differences in excess IET from the mean, then we can assume that assigning the lnRR that corresponds to this analog OAT identifies person-specific lnRRs, and hence the variability in lnRRs, for a given mean lnRR. In other words, this process disaggreates the population-wide lnRR on a given day by assuming that this lnRR is a mean of individual lnRRs and their distribution matches the distribution of excess IETs on that day. Because IET is driven by age as well as work and housing conditions, we believe that it is reasonable to assume that the excess IET distribution approximates the lnRR distribution. Because this disaggregation accounts only for variability due to exposure, and not for variability due to susceptibility, we do have bias in our estimates. We also do not account for adaptation other than assuming that at the MMT, all heat-associated risk is zero, even among individuals with high IETs at that MMT. Conceivably, the rate of increase in risk could also differ depending on biological susceptibility--both at the MMT as well as in the rate of change of the risk with IET.
+
+##Calculate predicted OAT at the MMT (OATp.MMT) for each study
+
+
+
+##Calculate predicted OAT
+To do this for each scenario and city, first, pull in the coefficients, mean-centering and standardization values. Then pull in the IETs for the given scenario. Finally, rescale the variables and calculate APT for each person-day using the rearranged coefficients.
+```{r chunk-rearrange}
+mci<-setNames(c(25,22,25),c('ATL','DET','PHX'))
+mco<-setNames(c(28,26,35),c('ATL','DET','PHX')) #value at which APTmeanS was mean-centered for each city
+stio<-setNames(c(3,4,4),c('ATL','DET','PHX')) #value at which APTmeanS and IETmeanS were standardized for each city
+for (ci in abbrcity) {
+  cat('\n',ci,'\n')
+  city<-fullcity[match(ci,abbrcity)]
+  mc<-mco[ci] #actual mean-centering value for APTmean for this city
+  st<-stio[ci] #standardization value for APTmean for this city
+  #pull in coefficients and random intercepts
+  load(paste0(pa2,grep(ci,c(fi44,fi45,fi46),value=T)))
+  betas<-get(paste0('models.',ci))[['coef.lm.inccat.redhousing.noAC.rint.scaled']] #coefficients
+  rints<-get(paste0('models.',ci))[['rint.lm.inccat.redhousing.noAC.rint.scaled']] #random intercepts
+  rm(list=paste0('models.',ci))
+  beta0<-betas['(Intercept)']
+  beta1<-betas[grep('Intercept|APTmeanS',names(betas),invert=T)]
+  beta2<-betas['APTmeanS']
+  beta3<-betas[grep('APTmeanS:',names(betas),value=T)] #all the coefficients for the interaction terms
+  #get all the coefficients but those for Intercept, APTmean, and the interactions with APTmean
+  #get the demographics and rename as demos
+  load(paste0(pa2,grep(ci,c(fi6,fi7,fi8),value=T)))
+  demos<-get(paste0('demographics.',ci))
+  rm(list=paste0('demographics.',ci))
+  #run each scenario for the given city
+  for (sc in scenarios) {
+    cat(sc)
+    if (!file.exists(paste0(pa2,gsub('_','\\.',sc),'.',city,'.RData'))) next
+    load(paste0(pa2,gsub('_','\\.',sc),'.',city,'.RData'))
+    dat1<-get(paste0('IET.personday.',gsub('_','\\.',sc),'.',city))
+    rm(list=paste0('IET.personday.',gsub('_','\\.',sc),'.',city))
+    #drop the individuals who didn't make it into the regression model because of missings
+    dat1<-dat1[PERSON_ID %in% names(rints),]
+    #merge in the demographics if missing
+    if (!(sc %in% c('PowerOn_Present_NoHW_Control','PowerOn_Present_YesHW_Control'))) {
+      dat1<-merge(dat1,demos,by='PERSON_ID',all.x=T)}
+    #make everyone unemployed (OCC3) if in the PowerRestore scenario because no one is working outside during the power outtage
+    #if (grepl('PowerRestore',sc)) {dat1[,OCC:=3]}
+    if (ci=='ATL') {dat2<-varDeriv.fxn.ATL(dat1); varDeriv.fxn2.ATL(dat2)}
+    if (ci=='DET') {dat2<-varDeriv.fxn.DET(dat1); varDeriv.fxn2.DET(dat2)}
+    if (ci=='PHX') {dat2<-varDeriv.fxn.PHX(dat1); varDeriv.fxn2.PHX(dat2)}
+    rm(dat1)
+    dat2<-dat2[order(date,PERSON_ID),]
+    if(any(dat2$PERSON_ID!=rep(names(rints),5))) stop('PERSON_IDs dont match.')
+    dat2[,rints:=rep(rints[,1],5)]
+    #calculate beta1 * X
+    dat2[,beta1.x:=as.vector(t(beta1) %*% t(dat2[,.SD,.SDcols=names(beta1)]))]
+    #calculate beta3 * X
+    dat2[,beta3.x:=as.vector(t(beta3) %*% t(dat2[,.SD,.SDcols=names(beta1)]))]
+    #calculate predicted OAT and analog OAT
+    dat2[,OATp:=as.integer(round(((IETmeanS-beta0-beta1.x-rints)/(beta2+beta3.x)*st+mc)*100,0))]
+    dat2[,OATan:=as.integer(round(((IETmeanS-beta0-beta1.x-rints)/(beta2)*st+mc)*100,0))]
+    #dat2[,summary(anAPT)] #mean = 39.3 for the present-power-on-yesHW-control scenario for Phoenix, regardless of model
+    q1<-dat2[,round(quantile(OATp,p=c(0,1e-4,1e-3,1e-2,5e-2,1e-1,0.25,0.5,0.75,0.9,0.95,0.99,0.999,0.9999,1),na.rm=T),1)]
+    if (sc=='PowerRestore_Endofcentury_YesHW_Control') print(q1)
+  #change the more extreme values to the 1st and 99th percentile values
+  #dat2[OATp<q1['1%'],OATp:=q1['1%']]
+  #dat2[OATp>q1['99%'],OATp:=q1['99%']]
+  #prepare the dataset for export
+  #restrict the number of columns to save space
+  dat2<-dat2[,.SD,.SDcols=c('date','PERSON_ID','IET.mean','tempC_mean','OATp','OATan')]
+  #export
+  fwrite(dat2,paste0(pa2,paste0('OAT_IET_',sc,'_',city,'.csv')))
+  rm(dat2,q1)
+  }
+  rm(demos,mc,st,betas,beta1,beta3,beta0,beta2,rints,sc)
+}
+rm(ci,city)
+```
+
+
+

@@ -1,0 +1,1100 @@
+---
+title: "Step 6 Burden 220329"
+author: "Carina Gronlund"
+date: "April 29, 2022"
+output:
+  html_notebook:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=T)
+```
+
+Load necessary libraries and establish path and file names.
+```{r libs, eval=T, echo=F}
+library(data.table)
+source('C:\\Users\\gronlund\\Dropbox (University of Michigan)\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R')
+load(paste0(pa1,fi2))
+source('C:\\Users\\gronlund\\Dropbox (University of Michigan)\\DocumentsC\\NSF Stone\\Health Impact Function\\Programs\\paths_filenames.R')
+```
+
+#Step 6. Calculate the mean (RR-1) for each person-day denominator for each age/race/gender grouping j, estimate an AF for each person-day i, multiply each AF by the appropriate baseline daily health event count based on age/race/gender, and sum across person-days for each health event.
+
+##Estimating the attributable burden for the contemporary/power on/heat wave scenario:
+When doing health impact assessments, or estimating the portion of health events that are attributable to the exposure $AB$, we are given the total health event count $HT$ and the ratio of the risk among the exposed group vs. the risk in the non-exposed group $RR$. We also know that $HT=AB+HB$, where $HB$ is the baseline count of health events, or the count not attributable to the exposure. The $AF$, which we can estimate from the $RR$, is equivalent to $\frac{AB}{HT}$, and is the fraction of health events attributable to the exposure. Therefore, if we know $AF$, we can calculate $AB$ and also $HB$. 
+
+
+From Steenland and Armstrong 2006 and Rockhill 1998, $AF_j=\frac{\Sigma_i p_{ij}(RR_i-1)}{1+\Sigma_i p_{ij}(RR_i-1)}$ where $p_{ij}$ is the population exposure prevalence at exposure level $ij$, which is each person-day $i$ within age/gender/race group $j$. The denominator in this equation is the average RR across the age/race/gender grouping $j$. The numerator is the person-specific proportion increase in risk, $(RR_i-1)$. We will use the numerator and the common denominator to estimate the AF for each person-day $i$. Then we will import baseline daily health events specific to age, gender, and/or race groupings $j$ and multiply these by the AF for each $ij$ to get a temperature-attributable burden, or count of temperature-attributable health events, for each $ij$.
+
+Some details about this form of $AF_j$: We have to use the population exposure prevalence instead of the more correct case exposure prevalence because we don't know exactly who was a case in the present, because we're using aggregated mortality and a synthetic population, and we certainly can't know who is a case in the future. The form of the $AF_j$ often used is $AF_j = \Sigma_i\frac{p_{ci}(RR_{ij}-1)}{RR_{ij}}$ where $RR_i$ is the risk ratio in group $j$ for a given exposure at exposure level $i$, and $p_{ci}$ is the proportion of *health events,* rather than the proportion of the population, at exposure level $i$. $p_{ci}=\frac{H_{ij}}{H_j}$ where $H_j$ and $H_{ij}$ are the counts of health events in group $j$ and at exposure level $i$, respectively. In practice, $H_{ij}$ is often not known when doing health impact assessments, but this simplified version of $AF_j$ is acceptable because the $RR_{ij}$ is close to one. In our case, some of our $RR$s are for heat-related events, like heat stroke, and are quite high and far from one, given the strong correlation between heat-related events and outdoor temperature. Therefore, we need the more complex denominator in the equation for $AF_j$ above. Also, we assume that everyone is exposed to their IET, so this AF is not just the attributable fraction among the exposed but also the attributable fraction among the entire population. Finally, the following derivation and its reduction in complexity of the original equation is also performed to reduce RAM memory usage and computation time.
+
+The derivation of our process is as follows:
+
+We are given $AB = \Sigma_j AB_j$ and $AB_j = \Sigma_i AB_{ij}$ so $AB = \Sigma_j \Sigma_i AB_{ij}$ where $AB$ is the total attributable burden and $AB_j$ is the attributable burden within age/gender/race/date grouping $j$.
+
+We are also given $AB_{j} = AF_{j} \times HT_{j}$ where $HT$ is the count of health events in age/gender/race/date group $j$. Usually we think of $AB_j$ as $AF_j \times IR_j \times POP_j$ where $IR_j$ is incidence rate, but since our population is not changing in size over time, $IR_j \times POP_j$ reduces to $HT_j$. 
+
+Therefore, $AB = \Sigma_j (AF_{j} \times HT_j)$ where $AB$ is the number of health events attributable to the exposure.
+
+As an aside, $HT_j = \Sigma_i HT_{ij}$, but we are using an alternate form of the $AF_j$ because even though we know individual exposures and therefore $RR_{ij}$, we don't know $HT_{ij}$, or which individual was a case, in this study. 
+
+Given that $p_{ij}$ is $\frac{1}{n_j}$ since each person-day $i$ is their own exposure stratum within each group $j$, we can replace $p_{ij}$ with $\frac{1}{n_j}$ in the Steenland and Armstrong 2006 equation:
+ 
+$AF_{j} = \frac{\Sigma_i\frac{1}{n_j}(RR_{ij}-1)}{1+\Sigma_i \frac{1}{n_j}(RR_{ij}-1)}$ 
+
+The denominator is a constant within group $j$ and can be thought of as a mean proportion increase in risk plus 1 or a mean $RR$ in group $j$. This is true because our treatment of every individual person-day $i$ as having size of 1 person-days means that $n_{ij}=1$ and therefore $\Sigma_i n_{ij} = n_j$, where $n_j$ is the sum of person-days in group $j$. Therefore, substituting $\Sigma_in_{}ij$ with $n_j$, the denominator can be re-written as:
+
+$1+\Sigma_i \frac{1}{n_j}(RR_{ij}-1)=1+\frac{1}{n_j}\Sigma_i(RR_{ij}-1)=1+\frac{1}{n_j}\Sigma_iRR_{ij}-\frac{\Sigma_in_{ij}}{n_j}=\frac{1}{n_j}\Sigma_iRR_{ij}$
+
+Therefore,
+
+$AF_{j} = \frac{\frac{1}{n_j}\Sigma_i(RR_{ij}-1)}{\frac{1}{n_j}\Sigma_iRR_{ij}}=\frac{\Sigma_i(RR_{ij}-1)}{\Sigma_iRR_{ij}}=\Sigma_i\frac{(RR_{ij}-1)}{\Sigma_iRR_{ij}}$
+
+We can substitute $AB_{j} = AF_{j} \times HT_{j}$ into the equation for $AB_j$ as follows:
+
+$AB_{j} = AF_{j} \times HT_j = \Sigma_i\frac{(RR_{ij}-1)}{\Sigma_iRR_{ij}} \times HT_j=\Sigma_i\frac{HT_j \times (RR_{ij}-1)}{\Sigma_iRR_{ij}}$.
+
+If we still had the $\frac{1}{n_j}$ terms in the numerator and denominator, we could see that for group $j$, this is the proportion increase in risk for each person-day $i$ multiplied by the *mean* number of health events in group $j$ per person-day all divided by the *mean* RR in group $j$.
+
+In turn, 
+
+$AB=\Sigma_jAB_j=\Sigma_j\Sigma_i\frac{HT_j \times (RR_{ij}-1)}{\Sigma_iRR_{ij}}$
+
+Therefore, the city-wide burden $AB$ on a single day can first be estimated at the level of the person-day and then summed to the level of person, neighborhood, or city and/or across multiple days. Our approach will then be to:
+
+a. Import the $HT_j$ values for each city for each age group/gender/race grouping.
+
+b. Import the $RR_{ij}$ previously assigned to each individual $i$ in step 5.
+
+c. Sum the $RR_{ij}$ values within each group to use as the group-specific denominators $\Sigma_iRR_{ij}$.
+
+d. For each individual, multiply the $RR_{ij}-1$ quantity by $HT_j$ and divide by $\Sigma_iRR_{ij}$. This is the individual-level burden, or a fraction of a health event contributed by each person to the total heat-wave burden of disease.
+
+e. Each of these fractional burdens can then be summed by census tract and by city for the contemporary-power-on-heat wave scenario.
+
+##Estimating attributable health events during the power-restore and all of the future scenarios:
+
+Next, we subtract the five days of $AB_j$ from the total annual health event count from the corresponding age/race/sex group to get the annual non-heat-wave-related health count, or the *baseline* annual health count. Dividing this by the remaining number of days in the annual count (360 if the total annual health event count was for the full year and 92 if it was for June-August only), we arrive at the baseline daily health count $HB_j$. Using this value, for the remaining scenarios we can simply multiply $RR_{ij}$ by $\frac{HB_j}{n_j}$ to estimate that person-day's fractional contribution to the $AB$ for that scenario.
+
+Therefore, our next steps will be:
+
+f. Sum the $AB_j$ values across the 5 days and subtract this quantity $ABT_j$ from $HT_j$ to get $HBT_{j}$. Then divide this by 360 or 92 to get $HB_j$, which is the daily baseline health event count.
+
+g. For each of the remaining scenarios, multiply each $RR_ij$ by $\frac{HB_j}{n_j}$.
+
+In future exercises, these can be summed by city, census tract, age, race, or sex to understand spatial and demographic disparities in heat risk in each scenario.
+
+#Step 6a.
+Calculate the synthetic population counts for each age/gender/race grouping used for each health count below. Then, import the $H_j$ values for each city or county for each age group/gender/race grouping. These groupings are defined according to the baseline health rates--not according to the groups for which the RRs were derived, although these are often the same. The RR is assigned to an individual based on his/her age, gender, city, and IET. These RRs are then applicable to any grouping of baseline health rates, and that person is assigned a baseline health rate according to their age, race, ethnicity, and gender. Because the population denominator of the health rates cancel out in the AF numerator and denominator (see derivation above), we actually assign a health count to each person-day instead of a health rate. Throughout this program, the "rate" variables refer to health rates per 100 persons in the months of June-August in a single year.
+
+##Calculate synthetic population counts by five-year age/race/gender groupings.
+For each city, import the demographic data. Then aggregate these data by 1-year age, race, and gender categories. Race categories per Evan: "hh_race comes from the synthetic population data (which comes from PUMS), and is coded the same as the variable RAC1P, Recoded detailed race code 1=White alone 2=Black or African American alone 3=American Indian alone 4=Alaska Native alone 5=American Indian and Alaska Native tribes specified; or American Indian or Alaska Native, not specified and no other races 6=Asian alone 7=Native Hawaiian and Other Pacific Islander alone 8=Some Other Race alone 9=Two or More Race." Evan also indicated that the base data set did not include information on Hispanic ethnicity. Given the predominance of White and Black or African American in these three cities, we will aggregate race categories to be consistent with the National Center for Health statistics CDC Wonder categories: White=1, Black or African American=2, American Indian or Alaska Native=345, Asian or Pacific Islander=67, and Other=89. Integers take up less space than characters. Also, for SEX, 1 = male and 2 = female.
+
+```{r chunk-import-demos}
+for (cy in abbrcity) {
+  city<-fullcity[match(cy,abbrcity)]
+  demos<-importDemos(cy)
+  dat1<-demos[,.N,by=.(AGE,raceGrp,Sex)]
+  dat1<-dat1[order(AGE,Sex,raceGrp),]
+  assign(paste0('demos.agg.',cy),dat1)
+  rm(dat1,demos)
+}
+```
+
+##Import mortality counts and corresponding population counts, derive rates, and calculate city-specific counts.
+The mortality data are county-level estimates for 10-year age groups by race and gender for the years 2006-2010 for Jun/Jul/Aug. These were acquired from CDC Wonder's 1999-2019 underlying cause of death data set on 2021-03-21. Metadata is available at the ends of the text files. The population and crude-rate estimates were output as "Not applicable" because specific months were selected. Therefore, we additionally ran the query for all months to get the 5-year populations for these 5-year health counts. For combinations of 10-year age groups and races for which counts are suppressed (due to confidentiality because the counts are low), we used the statewide all-races estimates. Mortality rates were estimated for each age category and race combination as the ratio of deaths to corresponding population.
+
+###All-cause mortality
+
+Mortality Counts: Race-defined
+```{r chunk-import-mort1}
+dat1<-cdcimp(paste0(pa1,fi18))
+dat1<-dat1[,-grep('Population',names(dat1))]
+```
+
+Mortality Counts: All-race combined statewide
+```{r chunk-import-mort2}
+dat2<-cdcimp(paste0(pa1,fi20))
+dat2<-dat2[,-grep('Population',names(dat2))]
+```
+
+Import and merge the all-months race-defined data set, which contains population counts, with the race-defined mortality set and calculate the annual mortality rate per 100 persons, which is the rate calculated by the CDC.
+```{r chunk-import-mort-pop1}
+dat3<-cdcimp(paste0(pa1,fi19))
+dat3<-dat3[!is.na(dat3$State.Code),-grep('Deaths',names(dat3))]
+dat5<-merge(dat1,dat3,by=c('State.Code','County.Code','Sex','ageGrp10','raceGrp'),all.x=T)
+dat5$deathRatee2<-dat5$Deaths/dat5$Population*100
+```
+
+Import and merge the statewide all-months all-race data set, which contains population counts, with the all-race mortality set and calculate the annual mortality rate per 100. Both the deaths and populations are 5-year sums, so there is no need to divide by 5 to get the annual rate.
+```{r chunk-import-mort-pop2}
+dat4<-cdcimp(paste0(pa1,fi21))
+dat4<-dat4[!is.na(dat4$State.Code),-grep('Deaths',names(dat4))]
+dat6<-merge(dat2,dat4,by=c('State.Code','Sex','ageGrp10','raceGrp'))
+dat6$deathRatee2.allRace<-dat6$Deaths/dat6$Population*100
+```
+
+Fill in the instances where death rates are missing in the race-defined data set with all-race values.
+```{r chunk-fill-in}
+v1<-c('State.Code','Sex','ageGrp10')
+dat7<-merge(dat5[,c(v1,'County.Code','raceGrp','deathRatee2','Population')],dat6[,c(v1,'deathRatee2.allRace')],by=v1,all.x=T)
+dat7[is.na(dat7$deathRatee2),'deathRatee2']<-dat7[is.na(dat7$deathRatee2),'deathRatee2.allRace']
+dat7<-dat7[,-grep('deathRatee2\\.allRace',names(dat7))]
+```
+This produces a data set with 264 rows, one for each combination of county (3), Sex (2), ageGrp10 (11), and raceGrp (4). The June-August annual mortality rate in each category ranges from 0.0015% to 3.93% with a mean of 0.48%.
+
+Stack in the race=89 category.
+```{r chunk-add-other-race}
+dat8<-dat6
+dat8$deathRatee2<-dat8$deathRatee2.allRace
+dat8$County.Code<-c(4013,13121,26163)[match(dat8$State.Code,floor(c(4013,13121,26163)/1000))]
+#dat8$Population<-NA
+dat8$Deaths<-dat8$deathRatee2.allRace<-NULL
+dat7<-rbind(dat7,dat8)
+summary(dat7)
+```
+
+Calculate descriptives.
+```{r chunk-mean-rate}
+v5<-dat7$Population; v5[is.na(v5)]<-50 #fill in a very low population number for the other race categories so the code below will work but still downweight the other race contribution
+v1<-weighted.mean(dat7$deathRatee2,v5)
+cat('Crude total June-August annual rate per 100:',v1)
+v2<-weighted.mean(dat7$deathRatee2,v5)/(30+31+31)
+cat('\nCrude total daily rate per 100:',v2)
+v3<-weighted.mean(dat7$deathRatee2,v5)/(30+31+31)*365
+cat('\nCrude total corresponding annual rate per 100:',v3)
+dat8<-aggregate(data.frame(deaths=dat7$deathRatee2/100*v5,pop=v5),by=list(dat7$ageGrp10),FUN=sum)
+dat8$newPop<-c(0.014,0.055,0.145,0.139,0.135,0.162,0.135,0.087,0.066,0.045,0.015) #U.S. Standard 2000 Population used by NCHS for age adjustments, see https://wonder.cdc.gov/wonder/help/ucd.html#2000%20Standard%20Population
+v4<-weighted.mean(dat8$deaths/dat8$pop,dat8$newPop)/(30+31+31)*365*100
+cat('\nAge-adjusted total annual rate per 100:',v4)
+```
+The age-race-sex adjusted annual rate is 0.69%. This is a little lower than the national rate of 0.71% for this time period. This national rate is for all months, and mortality is higher in the winter, so these two estimates are acceptably similar to conclude that these data have been processed correctly. 
+
+Adjust the counts to the city-specific populations. First, stack the city-specific demographics aggregates. Then, define the ageGrp10 categories and merge by these. Then multiply the deathRate by the subgroup-specific population to get the death count in that group.
+```{r chunk-adjust-mort-to-city}
+dat1<-rbind(data.table(demos.agg.ATL,County.Code=13121),data.table(demos.agg.DET,County.Code=26163),data.table(demos.agg.PHX,County.Code=4013))
+dat1[AGE>0,ageGrp10:=paste0(floor((AGE+5)/10)*10-5*(AGE>4),'_',ceiling((AGE+6)/10)*10-6)][AGE==0,ageGrp10:='0_0'][AGE>=85,ageGrp10:='85_120']
+dat1[,ageGrp10:=gsub('0_4','1_4',ageGrp10)]
+dat2<-dat1[,sum(N),by=c('County.Code','ageGrp10','Sex','raceGrp')]#sum city-specific population further by ageGrp10
+setnames(dat2,'V1','popn')
+dat2[,Sex:=as.integer(Sex)]
+```
+
+```{r chunk-recalc-deaths}
+dat8<-merge(dat2,dat7,by=c('County.Code','ageGrp10','Sex','raceGrp'),all.x=T)
+dat8[,allcause.deaths.daily:=deathRatee2/100*popn/(30+31+31)]
+v2<-unlist(lapply(dat8[,ageGrp10],FUN=function(x) as.integer(strsplit(x,'_')[[1]][1])))
+v3<-unlist(lapply(dat8[,ageGrp10],FUN=function(x) as.integer(strsplit(x,'_')[[1]][2])))
+death.counts.groups<-dat8
+death.counts.groups[,':='(ageGrp10.min=v2,ageGrp10.max=v3)]
+summary(death.counts.groups)
+death.counts.groups$city<-abbrcity[match(death.counts.groups$County.Code,c(13121,26163,4013))]
+weighted.mean(death.counts.groups$deathRatee2,death.counts.groups$Population,na.rm=T)
+```
+There are 314 groups of County.Code, ageGrp10, raceGrp, and Sex combinations, with populations ranging from 2 to 89,822 and daily death counts in June-August ranging from 1.4e-4 to 2.2. The very low daily death counts are in groups with very, very small populations, e.g., the Native American race category in Atlanta and Detroit. The high daily death counts are in larger and older age groups in Atlanta and Detroit. The population-weighted mean 3-month death rate is 0.16%, which is 0.63% annually, which is roughly equal to the crude mortality rate. These checks suggest that these data were derived correctly.
+
+For the following studies, age/race/sex disease rates are not provided. Therefore, we import these from CDC Wonder or HCUPNet and apply the rates from national or Arizona-wide (Georgia and Michigan do not contribute to HCUPNet) to city-specific population sizes.
+
+###Phoenix Pettiti "consequences of heat and dehydration" Arizona mortality, 2000-2011.
+
+By comparison, the June-August counts are not much different from 1/4th of the annual counts, so we will not pull out the June-August counts here but instead use the annual counts which come with populations. The Maricopa-specific results have too many suppressed values to work with.
+```{r chunk-import-chhd}
+dat1<-cdcimp(paste0(pa1,fi22), dropNArows=T)
+dat1$deathRatee2.chd<-dat1$Deaths/dat1$Population*100/365*(30+31+31)
+
+dat2<-death.counts.groups[death.counts.groups$city=='PHX',]
+dat3<-merge(dat2,dat1[,c('ageGrp10','deathRatee2.chd')],by=c('ageGrp10'),all.x=T)
+dat3[,chd.deaths.daily:=deathRatee2.chd/100*popn/(30+31+31)]
+summary(dat3)
+dat3[,weighted.mean(deathRatee2.chd,popn,na.rm=T)]/100*100000*365/92
+```
+The weighted mean per 100,000 persons of 6.6 is similar to the crude total annual Arizona rate in CDC Wonder of 8.5 per 100,000.
+
+Add these estimates to the deaths.counts.group object.
+```{r chunk-add-chd}
+death.counts.groups[,':='(deathRatee2.chd=NA,chd.deaths.daily=NA)]
+death.counts.groups<-death.counts.groups[city!='PHX',]
+death.counts.groups<-rbind(death.counts.groups,dat3)
+```
+
+###Phoenix Pettiti heat-related mortality.
+This is for all of Arizona, then derived for Phoenix only. Race subgroups were mainly suppressed. We assume that the heat-related deaths occur only in June-August and that these are both June-August estimates and full year estimates.
+```{r chunk-heat-Maricopa}
+dat1<-cdcimp(paste0(pa1,fi24))
+dat1$deathRatee2.heat<-dat1$Deaths/dat1$Population*100
+
+dat2<-death.counts.groups[death.counts.groups$city=='PHX',]
+dat3<-merge(dat2,dat1[,c('ageGrp10','deathRatee2.heat')],by=c('ageGrp10'),all.x=T)
+dat3[,heat.deaths.daily:=deathRatee2.heat/100*popn/(30+31+31)]
+summary(dat3)
+dat3[,weighted.mean(deathRatee2.heat,popn,na.rm=T)]/100*100000
+```
+The weighted mean of 0.75 per 100,000 persons is similar to CDC Wonder's rate of 0.8 per 100,000.
+
+Add these estimates to the death.counts.group object.
+```{r chunk-add-heat}
+death.counts.groups[,':='(deathRatee2.heat=NA,heat.deaths.daily=NA)]
+death.counts.groups<-death.counts.groups[city!='PHX',]
+death.counts.groups<-rbind(death.counts.groups,dat3)
+```
+
+##Import ED visit counts and corresponding population counts, derive rates, and calculate city-specific counts.
+
+###Atlanta Winquist Fluid and electrolyte ED visits
+Import. The rates in the HCUPNet data are per 100,000 persons, so here, we convert these to per 100 persons.
+```{r chunk-ED-fe-import}
+dat1<-fread(paste0(pa1,fi25),skip=9,nrows=10,select=c(2:5),col.names = c('ageGrp6','visits.N','visits.pct','visits.rate'))
+dat2<-dat1[!(ageGrp6 %in% c('','Missing','Male','Female')),][,EDratee2.fluid:=as.numeric(visits.rate)/100000*100]
+dat2[ageGrp6=='<1',':='(ageGrp6.min=0,ageGrp6.max=0)]
+dat2[ageGrp6=='1-17',':='(ageGrp6.min=1,ageGrp6.max=17)]
+dat2[ageGrp6=='18-44',':='(ageGrp6.min=18,ageGrp6.max=44)]
+dat2[ageGrp6=='45-64',':='(ageGrp6.min=45,ageGrp6.max=64)]
+dat2[ageGrp6=='65-84',':='(ageGrp6.min=65,ageGrp6.max=84)]
+dat2[ageGrp6=='85+',':='(ageGrp6.min=85,ageGrp6.max=120)]
+```
+
+Calculate the corresponding national population based on the visits.rate and visits.N.
+```{r chunk-ED-popn}
+dat2[,popn.national:=visits.N/(as.numeric(visits.rate)/100000)]
+```
+
+Create an EDvisit.counts.groups object from these and calculate the city-specific counts for fluid and electrolyte visits.
+```{r chunk-ED-fe-city}
+dat3<-rbind(data.table(city='ATL',demos.agg.ATL),data.table(city='DET',demos.agg.DET),data.table(city='PHX',demos.agg.PHX))
+dat3[AGE==0,ageGrp6:=c('<1')][AGE >=1 & AGE < 18,ageGrp6:='1-17'][AGE>=18 & AGE<45,ageGrp6:='18-44'][AGE>=45 & AGE<65,ageGrp6:='45-64'][AGE >= 65 & AGE<85,ageGrp6:='65-84'][AGE>=85,ageGrp6:='85+']
+dat4<-dat3[,sum(N),by=c('city','ageGrp6')][,popn:=V1][,V1:=NULL] #sum city-specific population further by ageGrp6
+dat5<-merge(dat4,dat2,by='ageGrp6')
+dat5[,fluid.EDvisits.daily:=EDratee2.fluid/100*popn/365]
+EDvisit.counts.groups<-dat5[,.SD,.SDcols=c('ageGrp6','city','popn','popn.national','EDratee2.fluid','fluid.EDvisits.daily')]
+```
+
+###Petitti heat-related ED visits.
+Import. Note--these are specific to Arizona rather than national like the other HCUPNet results. The Arizona population by age group was not available on HCUPNet, so we pull 2010 Census data for Arizona (data.census.gov) and re-calculate for the HCUPNet age groups. We also assume that since most of these occur in June-August, that these are a June-August rate rather than a 365-day rate.
+```{r chunk-heat-ED-AZ}
+dat1<-fread(paste0(pa1,fi29),skip=10,nrows=7,select=c(2:3),col.names=c('ageGrp6','visits.N.heatAZ'))[-1,]
+dat2<-data.table(ageGrp=c('<1','1-17','18-44','45-64','65-84','85+'),ageGrpN=c(455715/5,455715/5*4+453680+448664+461582/5*3,461582/5*2+442584+439998+416695+415693+406801,427022+415524+375268+350960,282866+215026+162261+118278,103400))
+dat1<-cbind(dat1,dat2[,-1])[,EDratee2.Petitti.heat:=visits.N.heatAZ/ageGrpN*100]
+dat2<-merge(EDvisit.counts.groups,dat1,by='ageGrp6',all.x=T)
+dat2[,Petitti.heat.EDvisits.daily:=EDratee2.Petitti.heat/100*popn/(30+31+31)]
+dat2[,':='(visits.N.heatAZ=NULL,ageGrpN=NULL)]
+EDvisit.counts.groups<-dat2
+```
+
+###Detroit analog Kingsley heat and dehydration and heat-injury ED visits
+These two ED visit types need to be summed first.
+Import and sum.
+```{r chunk-ED-heat-import}
+dat1<-fread(paste0(pa1,fi27),skip=9,nrows=10,select=c(2:3),col.names = c('ageGrp6','visits.N.heatdehyd'))
+dat1<-dat1[!(ageGrp6 %in% c('','Missing','Male','Female')),]
+dat2<-fread(paste0(pa1,fi28),skip=9,nrows=10,select=c(2:3),col.names = c('ageGrp6','visits.N.heatinj'))
+dat2<-dat2[!(ageGrp6 %in% c('','Missing','Male','Female')),]
+dat1[,sum(visits.N.heatdehyd)]/(dat1[,sum(visits.N.heatdehyd)]+dat2[,sum(visits.N.heatinj)])
+if (all(dat1[,1:2]!=dat2[,1:2])) stop('dont cbind')
+dat2<-cbind(dat1,dat2[,2])[,visits.N:=visits.N.heatdehyd+visits.N.heatinj]
+```
+97.6% of these visits are in the natural-cause dehydration-and-heat category, which includes mostly dehydration visits.
+
+###Detroit Kingsley heat_related ED visits
+Join with EDvisit.counts.groups, calculate the national rate and then calculate the city-specific rate. Because most of these visits are for dehydration, and because dehydration is a year-round problem (can also be caused by vomiting and diarrhea, for example), we can't assume that these are only summer visit rates.
+```{r chunk-ED-heat-city}
+dat6<-merge(EDvisit.counts.groups,dat2,by='ageGrp6')
+dat6[,EDratee2.Kingsley.heat:=as.numeric(visits.N)/popn.national*100]
+dat6[,Kingsley.heat.EDvisits.daily:=EDratee2.Kingsley.heat/100*popn/365]
+dat7<-dat6[,.SD,.SDcols=c('ageGrp6','city','popn','EDratee2.Kingsley.heat','Kingsley.heat.EDvisits.daily')]
+if (all(dat7[,1:2]!=EDvisit.counts.groups[,1:2])) stop('dont cbind')
+EDvisit.counts.groups<-cbind(EDvisit.counts.groups,dat7[,.SD,.SDcols=c('EDratee2.Kingsley.heat','Kingsley.heat.EDvisits.daily')])
+```
+
+###All-cause ED visits for Detroit-Kingsley et al.
+Import.
+```{r chunk-allcause-ED}
+dat1<-fread(paste0(pa1,fi30),skip=10,nrows=7,select=c(2,5),col.names = c('ageGrp6','EDratee2.allcause'))[-1,]
+dat1[,EDratee2.allcause:=as.numeric(EDratee2.allcause)/100000*100]
+dat2<-merge(EDvisit.counts.groups,dat1,by='ageGrp6',all.x=T)
+dat2[,allcause.EDvisits.daily:=EDratee2.allcause/100/365*popn]
+EDvisit.counts.groups<-dat2
+```
+
+###Atlanta Winquist Renal ED visits
+Import.
+```{r chunk-ED-renal-import}
+dat1<-fread(paste0(pa1,fi26),skip=9,nrows=10,select=c(2:4),col.names = c('ageGrp6','visits.N','visits.pct'))
+dat2<-dat1[!(ageGrp6 %in% c('','Missing','Male','Female')),]
+```
+
+Join with EDvisit.counts.groups, calculate the national rate and then calculate the city-specific rate.
+```{r chunk-ED-renal-city}
+dat6<-merge(EDvisit.counts.groups,dat2,by='ageGrp6')
+dat6[,EDratee2.renal:=as.numeric(visits.N)/popn.national*100]
+dat6[,renal.EDvisits.daily:=EDratee2.renal/100*popn/365]
+dat7<-dat6[,.SD,.SDcols=c('ageGrp6','city','popn','EDratee2.renal','renal.EDvisits.daily')]
+if (all(dat7[,1:2]!=EDvisit.counts.groups[,1:2])) stop('dont cbind')
+EDvisit.counts.groups<-cbind(EDvisit.counts.groups,dat7[,.SD,.SDcols=c('EDratee2.renal','renal.EDvisits.daily')])
+```
+
+
+###Atlanta Winquist heat-related visits
+In this case, assume that these are only during June-August, in which case the denominator is 92 days instead of 365 for a daily count. Note that these are downloaded for ICD codes 992.0-992.9 for five years each. The rate is not age-group-specific. For these codes, rates were not available at the region level (including Florida, North Carolina, and South Carolina because other South Atlantic states were not available including Georgia) or at the age-group level. Rates were only available at the national level for all age groups combined. Therefore, we calculated a population-weighted rate and used age-group populations to calculate the daily count from the rate.
+```{r chunk-Winquist-heat}
+dat1<-data.table()
+for (i in 0:9) {
+  dat1<-rbind(dat1,fread(file=paste0(pa1,fi48),skip=9+i*15,nrows=6,select=c(2:3),header=F,col.names = c('visits.N','visits.rate'))[-1,])
+}
+dat1[,':='(visits.N=as.numeric(visits.N),visits.rate=as.numeric(visits.rate))] #the colClasses function in the import crashes R, so convert to numeric like this
+dat1[,year:=rep(2010:2006,10)] #add years
+v1<-dat1[,weighted.mean(visits.rate,w=visits.N)] #this is the overall rate
+EDvisit.counts.groups[,Winquist.heat.EDvisits.daily.ratee5:=v1/(30+31+31)]
+EDvisit.counts.groups[,Winquist.heat.EDvisits.daily:=Winquist.heat.EDvisits.daily.ratee5/1e5*popn]
+```
+
+##Import PTB counts and corresponding population counts, derive rates, and calculate city-specific counts.
+Transcribe Atlanta, Detroit, and Phoenix PTB statistics for 2014 (most recent year available from March of Dimes) and create a dataset for PTB births for women age 15-44.
+```{r chunk-import-PTB}
+PTB.counts.groups<-data.table(ageGrp1='15-44',Sex=2L,city=c('ATL','DET','PHX'),PTBs.daily=c(1056,1311,2196)/366)
+dat1<-death.counts.groups[ageGrp10 %in% c('15_24','25_34','35_44') & Sex==2,sum(popn,na.rm=T),by=city]
+PTB.counts.groups[,':='(ageGrp1.min=15L,ageGrp1.max=44L,popn=dat1$V1,Sex=2L)]
+```
+
+Save to master object.
+```{r chunk-save-counts}
+rm(list=grep('^dat[[:digit:]]{1,2}$|^[[:alpha:]]{1,2}$|^[[:alpha:]]{1,1}[[:digit:]]{1,2}$',ls(),value=T))
+save.image(paste0(pa1,fi2))
+```
+
+#Steps 6b-d.
+For the contemporary/power on/heat wave scenario only,
+b. For each health event, import the $RR_{ij}$, previously assigned to each individual $i$ in step 5 and merge in the group categories.
+c. Sum the $RR_{ij}$ values within each group to use as the group-specific denominators $\Sigma_iRR_{ij}$.
+d. For each individual, multiply the $RR_{ij}-1$ quantity by $H_j$ and divide by $\Sigma_iRR_{ij}$. This is the individual-level burden, or a fraction of a health event contributed by each person to the total heat-wave burden of disease. This is the same as multiplying the $RR_{ij}-1$ quantity by $H_j$ and $\frac{1}{n_j}$ and divide by $\frac{1}{n_j}\times \Sigma_iRR_{ij}$ because the $\frac{1}{n_j}$ terms cancel out.
+
+Create lists linking each study to its respective health effect and corresponding city.
+```{r chunk-health-effects}
+v1<-unique(gsub('^\\.|\\.$','',gsub('[[:digit:]]+$','',gsub('[[:digit:]]\\.[[:digit:]]','',gsub('heatrelated','heat_related',gsub('\\.+{2}','\\.',gsub('\\.{1,2}$','',gsub('Atlanta|Detroit|Phoenix|female|male|both|-|_','',names(RR.APT)))))))))
+ls1<-list(grep('allcause.mortality',v1,value=T),c('Petitti.2016.EHP.heat_related.mortality'),c('Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality'), c('Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits'), c('Winquist.2016.EnvironRes.Renal.ED.visits'), c('Winquist.2016.EnvironRes.heat_related.ED.visits'),c('Kingsley.2015.EHP.allcause.ED.visits'),c('Kingsley.2015.EHP.heat_related.ED.visits'),c('Petitti.2016.EHP.heat_related.ED.visits'),c('Sun.2019.EnvironInt.preterm.birth'))
+v2<-paste0(c('allcause.deaths','heat.deaths','chd.deaths','fluid.EDvisits','renal.EDvisits','Winquist.heat.EDvisits','allcause.EDvisits','Kingsley.heat.EDvisits','Petitti.heat.EDvisits','PTBs'),'.daily')
+names(ls1)<-v2
+ls2<-lapply(1:length(ls1),FUN=function(x) {list(study=paste0('RR.',ls1[[x]]),heff=v2[x])})
+rm(v1,v2)
+```
+
+Steps b-d.
+```{r chunk-RR-groups}
+#calculate HT_j/n_j*100,000 for all cities
+v19<-grep('daily',names(death.counts.groups),value=T)
+death.counts.groups[,paste0(v19,'.ratee5'):=lapply(.SD,FUN=function(x) {x/popn*1e5}),.SDcols=v19]
+v21<-grep('daily',names(EDvisit.counts.groups),value=T)
+EDvisit.counts.groups[,paste0(v21,'.ratee5'):=lapply(.SD,FUN=function(x) {x/popn*1e5}),.SDcols=v21]
+v23<-grep('daily',names(PTB.counts.groups),value=T)
+PTB.counts.groups[,paste0(v23,'.ratee5'):=lapply(.SD,FUN=function(x) {x/popn*1e5}),.SDcols=v23]
+#loop through steps b-d for each city
+for (city in fullcity) {
+  #Step 6b. data import and prep
+  cy<-abbrcity[match(city,fullcity)]
+  #import the present-day powerOn NoHW scenario
+  sc<-'PowerOn_Present_NoHW_Control'
+  v1<-paste0(pa2,paste0('RR_',sc,'_',city,'.csv'))
+  dat1<-fread(v1) #read in sc-cy specific file
+  #drop any demographics that might already be there
+  v30<-grep('AGE|SEX',names(dat1),value=T)
+  if (length(v30)>0) {dat1[,v30]<-NULL}
+  #create vector of the demographics needed
+  v26<-c('PERSON_ID','AGE','raceGrp','Sex','ageGrp10','ageGrp6','ageGrp1')
+  #import the demographics
+  demos<-importDemos(cy)
+  #keep relevant variables in demographics
+  demos<-demos[,.SD,.SDcols=c('PERSON_ID','AGE','raceGrp','Sex','ageGrp10','ageGrp6','ageGrp1')]
+  #keep only the individuals who were not missing IETs
+  demos<-demos[PERSON_ID %in% dat1$PERSON_ID,]
+  #join demos to dat1
+  dat1<-demos[dat1,on='PERSON_ID']
+  rm(demos)
+  #identify the variables corresponding to each of the disease types
+  v3<-grep('mortality',names(dat1),value=T)
+  v5<-grep('ED\\.visits',names(dat1),value=T)
+  v7<-grep('preterm\\.birth',names(dat1),value=T)
+    
+  #Step 6c. take the mean RR_ij by groups and day for each study RR for each type of outcome (mortality, ED visits, PTB)
+  dat2<-dat1[,lapply(.SD,mean,na.rm=T),by=.(date,ageGrp10,Sex,raceGrp),.SDcols=c(v3)]
+  names(dat2)<-gsub('RR','RR\\.mean\\',names(dat2))
+  dat3<-dat1[,lapply(.SD,mean,na.rm=T),by=.(date,ageGrp6),.SDcols=v5]
+  names(dat3)<-gsub('RR','RR\\.mean\\',names(dat3))
+  dat4<-dat1[,lapply(.SD,mean,na.rm=T),by=.(date,ageGrp1,Sex),.SDcols=v7]
+  names(dat4)<-gsub('RR','RR\\.mean\\',names(dat4))
+  
+    #join HT_j/n_j*100,000 to the mean RR_ij's for each of the health outcomes
+  v19<-grep('ratee5',names(death.counts.groups),value=T)
+  v21<-grep('ratee5',names(EDvisit.counts.groups),value=T)
+  v23<-grep('ratee5',names(PTB.counts.groups),value=T)
+  v10<-c('ageGrp10','Sex','raceGrp',v19)
+  dat2<-death.counts.groups[city==cy,.SD,.SDcols=v10][dat2,on=c('ageGrp10','Sex','raceGrp')]
+  v11<-c('ageGrp6',v21)
+  dat3<-EDvisit.counts.groups[city==cy,.SD,.SDcols=v11][dat3,on=c('ageGrp6')]
+  v12<-c('ageGrp1','Sex',v23)
+  dat4<-PTB.counts.groups[city==cy & Sex==2,.SD,.SDcols=v12][dat4,on=c('ageGrp1','Sex')]
+
+  #Step 6d.  divide RR_ij-1 by mean RR_ij to get AF_ij and multiply by H_j/n_j to get AB_ij
+    #merge in the mean RR_ijs and H_j/n_js
+  dat1<-dat2[dat1,on=c('date','ageGrp10','Sex','raceGrp')]
+  dat1<-dat3[dat1,on=c('date','ageGrp6')]
+  dat1<-dat4[dat1,on=c('date','ageGrp1','Sex')]
+    #for each health outcome, perform the calculations
+  for (j in ls2) { #ls2 is the names of the RRs and their corresponding health events
+    v14<-j[[1]][j[[1]] %in% names(dat1)] #just the RRs that are in this city-specific data
+    v24<-paste0(j[[2]],'.ratee5') #name of HT_j/n_j
+    if (length(v14)==0) next
+    v15<-gsub('RR','RR.mean',v14) #RR.mean names
+    v16<-gsub('RR','ABe7',v14) #AB names
+    v25<-gsub('RR','AF',v14) #AF names
+    set(dat1,j=v25,value=as.data.table((as.matrix(dat1[,..v14])-1)/as.matrix(dat1[,..v15]))) #AF calculation
+    set(dat1,j=v16,value=as.data.table(as.matrix(dat1[,..v25])*dat1[,get(v24)]/1e5*1e7)) #AB calculation
+    }
+    #reduce size by converting to integer. This effectively diminishes burden contributions of less than 1 ten millionth of a person to zero. Note: we skip this step because some of the heat-related outcomes in Phoenix have burdens that are higher than the highest possible integer in R.
+  #v18<-grep('^ABe7\\.5day\\.',names(dat1),value=T)
+  #dat1[,(v18):=lapply(.SD,FUN=function(x) {as.integer(round(x,0))}),.SDcols=v18]
+    #drop the RR, daily count, and demographic variables
+  v17<-grep('daily|RR|AGE|ageGrp|raceGrp|Sex',names(dat1),value=T)
+  dat1[,(v17):=NULL]
+  #save the object
+  fwrite(dat1,paste0(pa2,paste0('ABfromAF_',sc,'_',city,'.csv')))
+  rm(list=grep('^dat[[:digit:]]{1,2}$|^v[[:digit:]]{1,2}$|^[[:alpha:]]{1,1}$',ls(),value=T))
+}
+```
+
+#Step 6e.
+e. Sum the fractional burdens by city, age, race and sex. The inputs are individual the 1-day total burdens per 10 million persons of this hot, but not extreme-heat, event, and the summed outputs are the total 5-day burdens. We exclude the extreme heat event scenario, even though it's in the contemporary period, because it was an exceptionally hot event. The non-heat-wave period still has some high heat days, but they would be more common events and therefore contribute more to the $HT_j$ value. We instead make the generous assumption that the non-heat-wave period represents average heat conditions in the summer in these cities.
+
+City:
+```{r chunk-sums-city}
+for (city in fullcity) {
+cy<-abbrcity[match(city,fullcity)]
+dat1<-fread(paste0(pa2,paste0('ABfromAF_PowerOn_Present_NoHW_Control_',city,'.csv')))
+demos<-importDemos(cy)
+dat1<-merge(dat1,demos[,c('PERSON_ID','ageGrp10','ageGrp6','ageGrp1','raceGrp','Sex')],by='PERSON_ID',all.x=T)
+#total burden
+dat2<-dat1[,lapply(.SD,FUN=function(x) {sum(x,na.rm=T)/1e7}),.SDcols=grep('ABe7',names(dat1),value=T)]
+dat2<-melt(dat2,measure.vars=patterns('^ABe7\\.'),variable='study.model',value=paste0(city,' AB total'))
+#burden by race group
+dat3<-dat1[,lapply(.SD,FUN=function(x) {sum(x,na.rm=T)/1e7}),.SDcols=grep('AB',names(dat1),value=T),by=raceGrp]
+dat3<-dcast(melt(dat3,id.vars='raceGrp',measure.vars=patterns('^ABe7\\.'),variable='study.model',fun.aggregate=sum,na.rm=T),study.model ~ raceGrp)
+#burden by ageGrp10
+dat4<-dat1[,lapply(.SD,FUN=function(x) {sum(x,na.rm=T)/1e7}),.SDcols=grep('AB',names(dat1),value=T),by=ageGrp10]
+dat4<-dcast(melt(dat4,id.vars='ageGrp10',measure.vars=patterns('^ABe7\\.'),variable='study.model',fun.aggregate=sum,na.rm=T),study.model ~ ageGrp10)
+#burden by gender
+dat5<-dat1[,lapply(.SD,FUN=function(x) {sum(x,na.rm=T)/1e7}),.SDcols=grep('AB',names(dat1),value=T),by=Sex]
+dat5<-dcast(melt(dat5,id.vars='Sex',measure.vars=patterns('^ABe7\\.'),variable='study.model',fun.aggregate=sum,na.rm=T),study.model ~ Sex)
+#mean AF by ageGrp6 for ED visits
+dat6<-dat1[,lapply(.SD,FUN=function(x) {mean(x,na.rm=T)}),.SDcols=grep('^AF.+ED',names(dat1),value=T),by=ageGrp6]
+dat6<-dcast(melt(dat6,id.vars='ageGrp6',measure.vars=patterns('^AF.+ED'),variable='study.model',fun.aggregate=sum,na.rm=T),study.model ~ ageGrp6)
+#mean AF by ageGrp10, raceGrp, and gender
+dat7<-dat1[,lapply(.SD,FUN=function(x) {mean(x,na.rm=T)}),.SDcols=grep('^AF.+mortality',names(dat1),value=T),by=.(ageGrp10,raceGrp,Sex)]
+dat7<-dcast(melt(dat7,id.vars=c('ageGrp10','raceGrp','Sex'),measure.vars=patterns('^AF.+mortality'),variable='study.model',fun.aggregate=sum,na.rm=T),study.model ~ ageGrp10+raceGrp+Sex)
+#mean AF for PTB (women 15-45 only)
+dat8<-dat1[,lapply(.SD,FUN=function(x) {mean(x,na.rm=T)}),.SDcols=grep('^AF.+preterm',names(dat1),value=T),by=.(ageGrp1,Sex)]
+dat8<-dcast(melt(dat8,id.vars=c('ageGrp1','Sex'),measure.vars=patterns('^AF.+preterm'),variable='study.model',fun.aggregate=sum,na.rm=T),study.model ~ ageGrp1+Sex)
+
+print(cbind(dat2,dat3[,-1]))
+print(cbind(dat2,dat4[,-1]))
+print(cbind(dat2,dat5[,-1]))
+print(dat7)
+print(dat6)
+print(dat8)
+}
+```
+As expected, the non-heat-wave burden of heat is not particularly high, except for Detroit, for any city for any of the non-heat outcomes. The heat-outcomes have a high attributable fraction, as expected, although these vary from around 13% to 75% based on how "heat-related" is defined, with some definitions being more sensitive and less specific, like those that include dehydration, and others being less sensitive and more specific, like those limited to the heat injury ICD codes. The HW period estimates (not shown here) are about double these estimates, but still low in absolute terms.
+
+#Steps 6f-g.
+f. Sum the $AB_j$ values (each is for 5 days) and subtract this quantity from $HT_j$ (transformed from daily to 5-day sums) and divide by 5 to get $HB_{j}$. This is the daily baseline health event count in summer and is distinct from the health events attributable to extreme heat events.
+
+```{r chunk-sum-ABj}
+v1<-unique(gsub('^\\.|\\.$','',gsub('[[:digit:]]+$','',gsub('[[:digit:]]\\.[[:digit:]]','',gsub('heatrelated','heat_related',gsub('\\.+{2}','\\.',gsub('\\.{1,2}$','',gsub('Atlanta|Detroit|Phoenix|female|male|both|-|_','',names(RR.APT)))))))))
+ls1<-list(grep('allcause.mortality',v1,value=T),c('Petitti.2016.EHP.heat_related.mortality'),c('Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality'), c('Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits'), c('Winquist.2016.EnvironRes.Renal.ED.visits'), c('Winquist.2016.EnvironRes.heat_related.ED.visits'),c('Kingsley.2015.EHP.allcause.ED.visits'),c('Kingsley.2015.EHP.heat_related.ED.visits'),c('Petitti.2016.EHP.heat_related.ED.visits'),c('Sun.2019.EnvironInt.preterm.birth'))
+v2<-paste0(c('allcause.deaths','heat.deaths','chd.deaths','fluid.EDvisits','renal.EDvisits','Winquist.heat.EDvisits','allcause.EDvisits','Kingsley.heat.EDvisits','Petitti.heat.EDvisits','PTBs'),'.daily')
+names(ls1)<-v2
+ls2<-list(c('raceGrp','Sex','ageGrp10'),c('ageGrp6'),c('ageGrp1','Sex'))
+names(ls2)<-c('mortality','ED.visits','preterm.birth')
+for (city in fullcity) {
+cy<-abbrcity[match(city,fullcity)]
+demos<-importDemos(cy)
+dat1<-fread(paste0(pa2,paste0('ABfromAF_PowerOn_Present_NoHW_Control_',city,'.csv')))
+dat1<-demos[,c('PERSON_ID','raceGrp','Sex','ageGrp10','ageGrp6','ageGrp1')][dat1,on='PERSON_ID']
+  for (he in c('mortality','ED.visits','preterm.birth')) {
+  v1<-grep('^AB',grep(he,names(dat1),value=T),value=T) #AB names
+  v10<-ls2[grep(he,names(ls2))][[1]] #group j
+  dat2<-dat1[,lapply(.SD,sum,na.rm=T),.SDcols=v1,by=v10] #aggregate the AB columns by age/race/sex categories
+  v11<-c('death','EDvisit','PTB')[match(he,c('mortality','ED.visits','preterm.birth'))]
+  dat6<-get(paste0(v11,'.counts.groups'))[city==cy,] #daily counts of health events
+  #restrict to city and health events of interest
+  v2<-c(v10,grep(v11,names(dat6),value=T))
+  dat3<-dat6[city==cy,.SD,.SDcols=v2]
+  dat4<-dat3[dat2,on=v10] #merge daily counts with 5-day sums of ABs
+  v3<-grep('daily|^AB',names(dat4)) #health counts (HT and AB)
+  #dat4[,(v3):=lapply(.SD,function(x){ifelse(is.na(x),0,x)}),.SDcols=v3]
+  v4<-grep('^ABe7',names(dat4),value=T) #AB variables
+  v5<-gsub('^ABe7','HB.daily',v4) #create HB variable for each AB variable
+  v6<-gsub('^HB\\.daily\\.','',v5) #pull out just the study name from v5
+  #identify which studies, if any, apply to this city for this health event
+  v8<-do.call(rbind,lapply(1:length(ls1),FUN=function(x) {
+    v1<-unique(v6[v6 %in% unlist(ls1[[x]])])
+    v2<-names(ls1[x])
+    if (length(v1)>0) {
+      data.frame(study=v1,healthEvent=v2,stringsAsFactors =F)
+    } else data.frame(study=NA,healthEvent=NA)
+  }))
+  v8<-v8[complete.cases(v8),]
+  #for each relevant age-race-gender group, convert 5-day AB per 10 million persons to a 5-day AB count by dividing by 1e7, subtract it from the total daily count converted to a 5-day count, and divide by 5 to get the daily summer baseline rate from which extreme-heat-associated events have been excluded
+  for (x in 1:length(v4)) {
+    v1<-v8[v8$study==v6[x],'healthEvent'] #pick out health event for v4
+    v2<-v4[x] #AB variable
+    v3<-v5[x] #HB variable
+    dat4[,(v3):=(get(v1)*5-get(v2)/1e7)/5]
+    }
+  dat6<-dat4[,.SD,.SDcols=c(v10,v5)][dat6,on=v10]
+  assign(paste(he,cy,'HB',sep='.'),dat6)
+  }
+}
+HB.death<-rbind(mortality.ATL.HB,mortality.DET.HB,mortality.PHX.HB,fill=T)
+rm(mortality.ATL.HB,mortality.DET.HB,mortality.PHX.HB)
+HB.EDvisit<-rbind(ED.visits.ATL.HB,ED.visits.DET.HB,ED.visits.PHX.HB,fill=T)
+rm(ED.visits.ATL.HB,ED.visits.DET.HB,ED.visits.PHX.HB)
+HB.PTB<-rbind(preterm.birth.ATL.HB,preterm.birth.DET.HB,preterm.birth.PHX.HB,fill=T)
+rm(preterm.birth.ATL.HB,preterm.birth.DET.HB,preterm.birth.PHX.HB)
+```
+
+Save to master workspace.
+```{r chunk-save-HB}
+rm(list=grep('^[[:alpha:]]{1}[[:digit:]]{1,2}$|^dat[[:digit:]]{1}$|^[[:alpha:]]{1,2}$|^demos$|^city$|^ls[[:digit:]]{1}$',ls(),value=T))
+save.image(paste0(pa1,fi2))
+```
+
+
+Examine descriptives of the baseline burdens.
+```{r chunk-sums-city-HB}
+for (city in fullcity) {
+  for (he in c('death','EDvisit','PTB')) {
+  cy<-abbrcity[match(city,fullcity)]
+  dat1<-get(paste0('HB.',he))[city==cy,]
+  v1<-grep('city|raceGrp|Sex|^ageGrp10$|^ageGrp6$|^ageGrp1$',names(dat1),value=T) #available columns
+  v5<-grep('ageGrp[[:digit:]]{1,2}$',names(dat1),value=T) #age column
+  v2<-grep('HB',names(dat1),value=T) #HB columns
+  v3<-gsub('HB','HB\\.sum',v2) #new variable names
+  v4<-gsub('HB\\.daily\\.','',v2) #study name
+  dat2<-data.table(v4,dat1[,colSums(.SD,na.rm=T),.SDcols=v2]) #total sum
+  setnames(dat2,c('study',paste0('HB.daily.',cy)))
+  dat4<-data.table(v4,dat1[,colSums(.SD,na.rm=T),.SDcols=v2,by=v5]) #sum by age
+  setnames(dat4,c('study','ageGrp','HB.daily'))
+  dat4<-dcast(dat4,study ~ ageGrp,value.var='HB.daily') #cast dataset
+  if(any(grepl('raceGrp',names(dat1)))) {
+    dat5<-data.table(v4,dat1[,colSums(.SD,na.rm=T),.SDcols=v2,by=raceGrp])
+    setnames(dat5,c('study','raceGrp','HB.daily'))
+    dat5<-dcast(dat5, study ~ raceGrp, value.var='HB.daily')
+  } else dat5<-data.table(study=v4)
+  dat6<-merge(merge(dat2,dat4,by='study'),dat5,by='study')
+  print(dat6)
+  rm(dat1,dat2,dat4,dat5,dat6)
+}}
+```
+The baseline daily incidence rates are really close to the total daily incidence rates.
+
+
+g. For each of the other scenarios, multiply each $RR_{ij}-1$ by $HB_ij=\frac{HB_j}{n_j}$ to get the fractional attributable burden for each person, $AB_ij$. Do this for RRan and RRp.
+```{r chunk-AB-other-scenarios}
+for (city in fullcity) {
+  cy<-abbrcity[match(city,fullcity)]
+  demos<-importDemos(cy)
+  for (sc in scenarios[-grep('PowerOn_Present_NoHW_Control',scenarios)]) {
+    #read in RR file
+    v1<-paste0(pa2,paste0('RR_',sc,'_',city,'.csv'))
+    if (!file.exists(v1)) next
+    dat1<-fread(v1)
+    #merge with demos to assign demographics to each person and their RR
+    dat1<-demos[PERSON_ID %in% unique(dat1$PERSON_ID),.SD,.SDcols=c('PERSON_ID','ageGrp10','ageGrp6','ageGrp1','raceGrp','Sex')][dat1,on=c('PERSON_ID')]
+    for (he in c('death','EDvisit','PTB')) {
+      cat('\n',cy,sc,he)
+      #pull in the HB_j file for this he
+      dat2<-get(paste0('HB.',he))[city==cy,]
+      #convert daily HB_j from step 6g to a per-person-day risk estimate HB_ij by dividing HB_j by popn (n_j).
+      v6<-c('mortality','ED.visits','preterm.birth')[match(he,c('death','EDvisit','PTB'))]
+      v2<-grep(paste0(v6,'.RRan'),names(dat1),value=T) #RRan column names from dat1
+      v5<-grep(paste0(v6,'.RRp'),names(dat1),value=T) #RRp column names from dat1
+      v1<-gsub('\\.RR[[:alpha:]]{1,2}$','',grep('RRan',v2,value=T)) #just the study names
+      v3<-paste0('HB.daily.',v1) #he-specific HB_j column names from dat2
+      v4<-paste0('HBi.daily',v1) #corresponding HB_ij column names for columns to be created
+      v8<-paste0('ABe7an.',v1) #corresponding AB column names for columns to be created from RRan
+      v9<-paste0('ABe7p.',v1) #corresponding AB column names for columns to be created from RRp
+      dat2[,(v4):=.SD/popn,.SDcols=v3] #calculate HB_i as HB_j/n_j
+      #merge RR file with new HB_i file
+      v7<-grep('ageGrp10$|ageGrp6$|ageGrp1$|raceGrp|Sex',names(dat2),value=T)
+      dat3<-dat2[,.SD,.SDcols=c(v7,v3,v4)][dat1,on=v7] #merge dat1 and dat2
+      #multiply RRan_i-1 and RRp_i-1 by HB_i to get ABan_i and ABp_i, accounting for the fact that the RRs had been multiplied by 100 and converted to integers to save space, so we need to divide them by 100 here.
+      set(dat3,j=c(v8,v9),value=as.data.table(as.matrix(dat3[,lapply(.SD,function(x) {as.numeric(x/100)-1}),.SDcols=c(v2,v5)])*as.matrix(dat3[,lapply(.SD,as.numeric),.SDcols=c(v4,v4)])*1e7))
+      #set anything more than 1 to 1 (you can't have a daily risk of more than 1 per 1 person) and convert to integers to save space. Note that even if there were 1e7 persons in the city, an attributable burden of, e.g., 0.4/1e7 per person would still sum to a total burden of less than 1 person.
+      dat3[,(c(v8,v9)):=lapply(.SD,FUN=function(x) {as.integer(round(pmin(1e7,x),0))}),.SDcols=c(v8,v9)]
+      #assign he-specific files
+      assign(paste0('AB.',he),dat3[order(PERSON_ID,date),.SD,.SDcols=c('PERSON_ID','date',v8,v9)])
+    }
+    #bind the he-specific files to a single city-scenario-specific file and save
+    fwrite(x=cbind(AB.death,AB.EDvisit[,-c(1,2)],AB.PTB[,-c(1,2)]),file=paste0(pa2,paste0('AB_',sc,'_',city,'.csv')))
+    rm(AB.death,AB.EDvisit,AB.PTB)
+  }
+}
+```
+
+What are the total 5-day attributable burdens for the following scenarios for each city? Note: the "pmin" code ensures that an individual can only experience the emergency health event once during the heat wave period.
+
+###PowerRestore_Endofcentury_YesHW_Control
+```{r chunk-sum-AB-eoc}
+dat6<-data.table()
+for (city in fullcity) {
+dat3<-fread(paste0(pa2,paste0('AB_PowerRestore_Endofcentury_YesHW_Control_',city,'.csv')))
+v1<-grep('AB',names(dat3),value=T)
+dat4<-dat3[,lapply(.SD,FUN=function(x) {sum(as.numeric(x)/1e7,na.rm=T)}),.SDcols=v1, by=PERSON_ID]
+dat4[,(v1):=lapply(.SD,FUN=function(x) {pmin(1,x)}),.SDcols=v1]
+dat5<-dat4[,lapply(.SD,FUN=function(x) {sum(as.numeric(x),na.rm=T)}),.SDcols=v1]
+dat6<-rbind(dat6,dat5[,city:=city],fill=T)
+}
+dat7<-dcast(melt(dat6,id.vars='city',variable.name='study'),study ~ city)
+dat7[,study:=gsub('e7','\\.',study)]
+v1<-unique(gsub('AB\\.[[:alpha:]]{1,2}\\.','',dat7$study))
+v2<-paste0('AB.',rep(c('an','p'),16),'.',rep(v1,each=2))
+dat7[,study:=factor(study,levels=v2)]
+dat7[,c(2:4):=lapply(.SD,round,0),.SDcols=2:4]
+matrix(as.matrix(dat7[order(study),2:4]),nrow=32,ncol=3,dimnames=list(levels(dat7$study),colnames(dat7)[2:4]))
+```
+
+Old results:
+Gasparrini.2015.Lancet.allcause.mortality                            11     822   26177
+Schwartz.2016.EnvironH.allcause.mortality                            15      62      15
+Nordio.2015.EnvironInt.allcause.mortality                             5      35      37
+Bobb.2014.EHP.allcause.mortality                                      8      14       5
+meta.allcause.mortality                                               9      39     961
+Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits             32      NA      NA
+Winquist.2016.EnvironRes.Renal.ED.visits                             26      NA      NA
+Winquist.2016.EnvironRes.heat_related.ED.visits                  159200      NA      NA
+Sun.2019.EnvironInt.preterm.birth                                     1       1       8
+Gronlund.2019.EnvironH.allcause.mortality                            NA     233      NA
+Kingsley.2015.EHP.allcause.ED.visits                                 NA     169      NA
+Kingsley.2015.EHP.heat_related.ED.visits                             NA     339      NA
+Petitti.2016.EHP.heat_related.mortality                              NA      NA    2571
+Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality      NA      NA     203
+Petitti.2016.EHP.allcause.mortality                                  NA      NA      86
+Petitti.2016.EHP.heat_related.ED.visits                              NA      NA  956167
+
+Petitti heat-related mortality
+42 C Cap: Petitti.2016.EHP.heat_related.mortality                    NA      NA      10
+50 C Cap: Petitti.2016.EHP.heat_related.mortality                    NA      NA     320
+55 C Cap: Petitti.2016.EHP.heat_related.mortality                    NA      NA    2740
+60 C Cap: Petitti.2016.EHP.heat_related.mortality                    NA      NA   23544
+
+New results:
+                                                                      Atlanta Detroit Phoenix
+AB.an.Gasparrini.2015.Lancet.allcause.mortality                             9     815    1525
+AB.p.Gasparrini.2015.Lancet.allcause.mortality                              9     857    3603
+AB.an.Schwartz.2016.EnvironH.allcause.mortality                            13      62      12
+AB.p.Schwartz.2016.EnvironH.allcause.mortality                             13      62      13
+AB.an.Nordio.2015.EnvironInt.allcause.mortality                             5      35      29
+AB.p.Nordio.2015.EnvironInt.allcause.mortality                              5      35      32
+AB.an.Bobb.2014.EHP.allcause.mortality                                      7      14       4
+AB.p.Bobb.2014.EHP.allcause.mortality                                       7      14       4
+AB.an.meta.allcause.mortality                                               8      39     262
+AB.p.meta.allcause.mortality                                                8      39     378
+AB.an.Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits             28      NA      NA
+AB.p.Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits              29      NA      NA
+AB.an.Winquist.2016.EnvironRes.Renal.ED.visits                             24      NA      NA
+AB.p.Winquist.2016.EnvironRes.Renal.ED.visits                              23      NA      NA
+AB.an.Winquist.2016.EnvironRes.heat_related.ED.visits                   96861      NA      NA
+AB.p.Winquist.2016.EnvironRes.heat_related.ED.visits                   116727      NA      NA
+AB.an.Sun.2019.EnvironInt.preterm.birth                                     1       1       8
+AB.p.Sun.2019.EnvironInt.preterm.birth                                      1       1       8
+AB.an.Gronlund.2019.EnvironH.allcause.mortality                            NA     228      NA
+AB.p.Gronlund.2019.EnvironH.allcause.mortality                             NA     234      NA
+AB.an.Kingsley.2015.EHP.allcause.ED.visits                                 NA     166      NA
+AB.p.Kingsley.2015.EHP.allcause.ED.visits                                  NA     169      NA
+AB.an.Kingsley.2015.EHP.heat_related.ED.visits                             NA     347      NA
+AB.p.Kingsley.2015.EHP.heat_related.ED.visits                              NA     356      NA
+AB.an.Petitti.2016.EHP.heat_related.mortality                              NA      NA    2512
+AB.p.Petitti.2016.EHP.heat_related.mortality                               NA      NA    2554
+AB.an.Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality      NA      NA      14
+AB.p.Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality       NA      NA      28
+AB.an.Petitti.2016.EHP.allcause.mortality                                  NA      NA      56
+AB.p.Petitti.2016.EHP.allcause.mortality                                   NA      NA      65
+AB.an.Petitti.2016.EHP.heat_related.ED.visits                              NA      NA 1223170
+AB.p.Petitti.2016.EHP.heat_related.ED.visits                               NA      NA 1084566
+
+###PowerOn_Endofcentury_YesHW_Control scenario:
+```{r chunk-sum-AB-eoc2}
+dat6<-data.table()
+for (city in fullcity) {
+dat3<-fread(paste0(pa2,paste0('AB_PowerOn_Endofcentury_YesHW_Control_',city,'.csv')))
+v1<-grep('AB',names(dat3),value=T)
+dat4<-dat3[,lapply(.SD,FUN=function(x) {sum(as.numeric(x)/1e7,na.rm=T)}),.SDcols=v1, by=PERSON_ID]
+dat4[,(v1):=lapply(.SD,FUN=function(x) {pmin(1,x)}),.SDcols=v1]
+dat5<-dat4[,lapply(.SD,FUN=function(x) {sum(as.numeric(x),na.rm=T)}),.SDcols=v1]
+dat6<-rbind(dat6,dat5[,city:=city],fill=T)
+}
+dat7<-dcast(melt(dat6,id.vars='city',variable.name='study'),study ~ city)
+dat7[,study:=gsub('e7','\\.',study)]
+v1<-unique(gsub('AB\\.[[:alpha:]]{1,2}\\.','',dat7$study))
+v2<-paste0('AB.',rep(c('an','p'),16),'.',rep(v1,each=2))
+dat7[,study:=factor(study,levels=v2)]
+dat7[,c(2:4):=lapply(.SD,round,0),.SDcols=2:4]
+matrix(as.matrix(dat7[order(study),2:4]),nrow=32,ncol=3,dimnames=list(levels(dat7$study),colnames(dat7)[2:4]))
+```
+
+Old results:
+Gasparrini.2015.Lancet.allcause.mortality                             3     368      60
+Schwartz.2016.EnvironH.allcause.mortality                             5      40       3
+Nordio.2015.EnvironInt.allcause.mortality                             3      27       9
+Bobb.2014.EHP.allcause.mortality                                      3       9       1
+meta.allcause.mortality                                               3      27      23
+Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits             10      NA      NA
+Winquist.2016.EnvironRes.Renal.ED.visits                             10      NA      NA
+Winquist.2016.EnvironRes.heat_related.ED.visits                    4782      NA      NA
+Sun.2019.EnvironInt.preterm.birth                                     1       1       2
+Gronlund.2019.EnvironH.allcause.mortality                            NA     127      NA
+Kingsley.2015.EHP.allcause.ED.visits                                 NA     118      NA
+Kingsley.2015.EHP.heat_related.ED.visits                             NA     178      NA
+Petitti.2016.EHP.heat_related.mortality                              NA      NA     697
+Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality      NA      NA       1
+Petitti.2016.EHP.allcause.mortality                                  NA      NA       9
+Petitti.2016.EHP.heat_related.ED.visits                              NA      NA    3166
+
+Petitti heat-related mortality 
+55 C Cap: Petitti.2016.EHP.heat_related.mortality                    NA      NA     743
+60 C Cap: Petitti.2016.EHP.heat_related.mortality                    NA      NA    4572
+95th percentile: Petitti.2016.EHP.heat_related.mortality             NA      NA   44269
+
+New results:
+                                                                      Atlanta Detroit Phoenix
+AB.an.Gasparrini.2015.Lancet.allcause.mortality                             3     379      47
+AB.p.Gasparrini.2015.Lancet.allcause.mortality                              3     387      53
+AB.an.Schwartz.2016.EnvironH.allcause.mortality                             5      40       3
+AB.p.Schwartz.2016.EnvironH.allcause.mortality                              4      41       3
+AB.an.Nordio.2015.EnvironInt.allcause.mortality                             3      27       8
+AB.p.Nordio.2015.EnvironInt.allcause.mortality                              3      27       8
+AB.an.Bobb.2014.EHP.allcause.mortality                                      3       9       1
+AB.p.Bobb.2014.EHP.allcause.mortality                                       3       9       1
+AB.an.meta.allcause.mortality                                               3      27      19
+AB.p.meta.allcause.mortality                                                3      27      21
+AB.an.Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits             10      NA      NA
+AB.p.Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits               9      NA      NA
+AB.an.Winquist.2016.EnvironRes.Renal.ED.visits                             10      NA      NA
+AB.p.Winquist.2016.EnvironRes.Renal.ED.visits                               9      NA      NA
+AB.an.Winquist.2016.EnvironRes.heat_related.ED.visits                    3208      NA      NA
+AB.p.Winquist.2016.EnvironRes.heat_related.ED.visits                     3854      NA      NA
+AB.an.Sun.2019.EnvironInt.preterm.birth                                     1       1       2
+AB.p.Sun.2019.EnvironInt.preterm.birth                                      1       1       2
+AB.an.Gronlund.2019.EnvironH.allcause.mortality                            NA     128      NA
+AB.p.Gronlund.2019.EnvironH.allcause.mortality                             NA     129      NA
+AB.an.Kingsley.2015.EHP.allcause.ED.visits                                 NA     117      NA
+AB.p.Kingsley.2015.EHP.allcause.ED.visits                                  NA     118      NA
+AB.an.Kingsley.2015.EHP.heat_related.ED.visits                             NA     183      NA
+AB.p.Kingsley.2015.EHP.heat_related.ED.visits                              NA     182      NA
+AB.an.Petitti.2016.EHP.heat_related.mortality                              NA      NA     501
+AB.p.Petitti.2016.EHP.heat_related.mortality                               NA      NA     575
+AB.an.Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality      NA      NA       1
+AB.p.Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality       NA      NA       1
+AB.an.Petitti.2016.EHP.allcause.mortality                                  NA      NA       8
+AB.p.Petitti.2016.EHP.allcause.mortality                                   NA      NA       8
+AB.an.Petitti.2016.EHP.heat_related.ED.visits                              NA      NA    4723
+AB.p.Petitti.2016.EHP.heat_related.ED.visits                               NA      NA    7447
+
+###PowerOn_Present_YesHW_Control scenario:
+```{r chunk-eoc3}
+dat6<-data.table()
+for (city in fullcity) {
+dat3<-fread(paste0(pa2,paste0('AB_PowerOn_Present_YesHW_Control_',city,'.csv')))
+v1<-grep('AB',names(dat3),value=T)
+dat4<-dat3[,lapply(.SD,FUN=function(x) {sum(as.numeric(x)/1e7,na.rm=T)}),.SDcols=v1, by=PERSON_ID]
+dat4[,(v1):=lapply(.SD,FUN=function(x) {pmin(1,x)}),.SDcols=v1]
+dat5<-dat4[,lapply(.SD,FUN=function(x) {sum(as.numeric(x),na.rm=T)}),.SDcols=v1]
+dat6<-rbind(dat6,dat5[,city:=city],fill=T)
+}
+dat7<-dcast(melt(dat6,id.vars='city',variable.name='study'),study ~ city)
+dat7[,study:=gsub('e7','\\.',study)]
+v1<-unique(gsub('AB\\.[[:alpha:]]{1,2}\\.','',dat7$study))
+v2<-paste0('AB.',rep(c('an','p'),16),'.',rep(v1,each=2))
+dat7[,study:=factor(study,levels=v2)]
+dat7[,c(2:4):=lapply(.SD,round,0),.SDcols=2:4]
+matrix(as.matrix(dat7[order(study),2:4]),nrow=32,ncol=3,dimnames=list(levels(dat7$study),colnames(dat7)[2:4]))
+```
+Old results:
+Gasparrini.2015.Lancet.allcause.mortality                             2     103      18
+Schwartz.2016.EnvironH.allcause.mortality                             3      23       2
+Nordio.2015.EnvironInt.allcause.mortality                             2      20       7
+Bobb.2014.EHP.allcause.mortality                                      2       6       1
+meta.allcause.mortality                                               2      18       9
+Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits              6      NA      NA
+Winquist.2016.EnvironRes.Renal.ED.visits                              6      NA      NA
+Winquist.2016.EnvironRes.heat_related.ED.visits                      69      NA      NA
+Sun.2019.EnvironInt.preterm.birth                                     1       1       2
+Gronlund.2019.EnvironH.allcause.mortality                            NA      57      NA
+Kingsley.2015.EHP.allcause.ED.visits                                 NA      76      NA
+Kingsley.2015.EHP.heat_related.ED.visits                             NA      76      NA
+Petitti.2016.EHP.heat_related.mortality                              NA      NA     190
+Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality      NA      NA       0
+Petitti.2016.EHP.allcause.mortality                                  NA      NA       4
+Petitti.2016.EHP.heat_related.ED.visits                              NA      NA     253
+
+Petitti heat-related mortality
+50 C Cap: Petitti.2016.EHP.heat_related.mortality                    NA      NA      81
+55 C Cap: Petitti.2016.EHP.heat_related.mortality                    NA      NA     202
+No Cap: Petitti.2016.EHP.heat_related.mortality                      NA      NA    3024
+
+New results:
+                                                                      Atlanta Detroit Phoenix
+AB.an.Gasparrini.2015.Lancet.allcause.mortality                             2     106      20
+AB.p.Gasparrini.2015.Lancet.allcause.mortality                              2     104      21
+AB.an.Schwartz.2016.EnvironH.allcause.mortality                             3      24       2
+AB.p.Schwartz.2016.EnvironH.allcause.mortality                              2      24       2
+AB.an.Nordio.2015.EnvironInt.allcause.mortality                             2      21       7
+AB.p.Nordio.2015.EnvironInt.allcause.mortality                              2      21       7
+AB.an.Bobb.2014.EHP.allcause.mortality                                      2       6       0
+AB.p.Bobb.2014.EHP.allcause.mortality                                       2       6       0
+AB.an.meta.allcause.mortality                                               2      18       9
+AB.p.meta.allcause.mortality                                                2      18       9
+AB.an.Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits              5      NA      NA
+AB.p.Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits               5      NA      NA
+AB.an.Winquist.2016.EnvironRes.Renal.ED.visits                              6      NA      NA
+AB.p.Winquist.2016.EnvironRes.Renal.ED.visits                               6      NA      NA
+AB.an.Winquist.2016.EnvironRes.heat_related.ED.visits                      65      NA      NA
+AB.p.Winquist.2016.EnvironRes.heat_related.ED.visits                       63      NA      NA
+AB.an.Sun.2019.EnvironInt.preterm.birth                                     0       1       2
+AB.p.Sun.2019.EnvironInt.preterm.birth                                      0       1       2
+AB.an.Gronlund.2019.EnvironH.allcause.mortality                            NA      57      NA
+AB.p.Gronlund.2019.EnvironH.allcause.mortality                             NA      57      NA
+AB.an.Kingsley.2015.EHP.allcause.ED.visits                                 NA      76      NA
+AB.p.Kingsley.2015.EHP.allcause.ED.visits                                  NA      76      NA
+AB.an.Kingsley.2015.EHP.heat_related.ED.visits                             NA      78      NA
+AB.p.Kingsley.2015.EHP.heat_related.ED.visits                              NA      76      NA
+AB.an.Petitti.2016.EHP.heat_related.mortality                              NA      NA     221
+AB.p.Petitti.2016.EHP.heat_related.mortality                               NA      NA     190
+AB.an.Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality      NA      NA       0
+AB.p.Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality       NA      NA       0
+AB.an.Petitti.2016.EHP.allcause.mortality                                  NA      NA       4
+AB.p.Petitti.2016.EHP.allcause.mortality                                   NA      NA       4
+AB.an.Petitti.2016.EHP.heat_related.ED.visits                              NA      NA     938
+AB.p.Petitti.2016.EHP.heat_related.ED.visits                               NA      NA    1555
+
+###PowerOn_Present_NoHW_Control scenario:
+```{r chunk-eoc4}
+dat6<-data.table()
+for (city in fullcity) {
+dat3<-fread(paste0(pa2,paste0('ABfromAF_PowerOn_Present_NoHW_Control_',city,'.csv')))
+v1<-grep('AB',names(dat3),value=T)
+dat4<-dat3[,lapply(.SD,FUN=function(x) {sum(as.numeric(x)/1e7,na.rm=T)}),.SDcols=v1, by=PERSON_ID]
+dat4[,(v1):=lapply(.SD,FUN=function(x) {pmin(1,x)}),.SDcols=v1]
+dat5<-dat4[,lapply(.SD,FUN=function(x) {sum(as.numeric(x),na.rm=T)}),.SDcols=v1]
+dat6<-rbind(dat6,dat5[,city:=city],fill=T)
+}
+dat7<-dcast(melt(dat6,id.vars='city',variable.name='study'),study ~ city)
+dat7[,study:=gsub('e7','\\.',study)]
+v1<-unique(gsub('AB\\.[[:alpha:]]{1,2}\\.','',dat7$study))
+v2<-paste0('AB.',rep(c('an','p'),16),'.',rep(v1,each=2))
+dat7[,study:=factor(study,levels=v2)]
+dat7[,c(2:4):=lapply(.SD,round,0),.SDcols=2:4]
+matrix(as.matrix(dat7[order(study),2:4]),nrow=32,ncol=3,dimnames=list(levels(dat7$study),colnames(dat7)[2:4]))
+```
+
+Old results:
+                                                                Atlanta Detroit Phoenix
+Gasparrini.2015.Lancet.allcause.mortality                             0       1       0
+Schwartz.2016.EnvironH.allcause.mortality                             0       2       1
+Nordio.2015.EnvironInt.allcause.mortality                             1       5       3
+Bobb.2014.EHP.allcause.mortality                                      0       0       0
+meta.allcause.mortality                                               1       3       0
+Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits              1      NA      NA
+Winquist.2016.EnvironRes.Renal.ED.visits                              1      NA      NA
+Winquist.2016.EnvironRes.heat_related.ED.visits                       4      NA      NA
+Sun.2019.EnvironInt.preterm.birth                                     0       0       1
+Gronlund.2019.EnvironH.allcause.mortality                            NA       2      NA
+Kingsley.2015.EHP.allcause.ED.visits                                 NA       9      NA
+Kingsley.2015.EHP.heat_related.ED.visits                             NA       5      NA
+Petitti.2016.EHP.allcause.mortality                                  NA      NA       0
+Petitti.2016.EHP.heat_related.mortality                              NA      NA       0
+Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality      NA      NA       0
+Petitti.2016.EHP.heat_related.ED.visits                              NA      NA       5
+
+New results:
+                                                                          Atlanta Detroit Phoenix
+AB.an.AB..Gasparrini.2015.Lancet.allcause.mortality                             0       0       1
+AB.p.AB..Gasparrini.2015.Lancet.allcause.mortality                              0       1       2
+AB.an.AB..Schwartz.2016.EnvironH.allcause.mortality                             1       4       5
+AB.p.AB..Schwartz.2016.EnvironH.allcause.mortality                              0       0       0
+AB.an.AB..Nordio.2015.EnvironInt.allcause.mortality                             0       0       3
+AB.p.AB..Nordio.2015.EnvironInt.allcause.mortality                              1      NA      NA
+AB.an.AB..Bobb.2014.EHP.allcause.mortality                                      1      NA      NA
+AB.p.AB..Bobb.2014.EHP.allcause.mortality                                       4      NA      NA
+AB.an.AB..meta.allcause.mortality                                               0       1       0
+AB.p.AB..meta.allcause.mortality                                               NA      NA       2
+AB.an.AB..Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits             NA      NA       9
+AB.p.AB..Winquist.2016.EnvironRes.Fluid.and.electrolyte.ED.visits              NA      NA       5
+AB.an.AB..Winquist.2016.EnvironRes.Renal.ED.visits                             NA       0      NA
+AB.p.AB..Winquist.2016.EnvironRes.Renal.ED.visits                              NA       0      NA
+AB.an.AB..Winquist.2016.EnvironRes.heat_related.ED.visits                      NA       0      NA
+AB.p.AB..Winquist.2016.EnvironRes.heat_related.ED.visits                       NA       5      NA
+AB.an.AB..Sun.2019.EnvironInt.preterm.birth                                     1       0       0
+AB.p.AB..Sun.2019.EnvironInt.preterm.birth                                      2       0       1
+AB.an.AB..Gronlund.2019.EnvironH.allcause.mortality                             5       1       4
+AB.p.AB..Gronlund.2019.EnvironH.allcause.mortality                              0       0       0
+AB.an.AB..Kingsley.2015.EHP.allcause.ED.visits                                  3       0       0
+AB.p.AB..Kingsley.2015.EHP.allcause.ED.visits                                  NA       1      NA
+AB.an.AB..Kingsley.2015.EHP.heat_related.ED.visits                             NA       1      NA
+AB.p.AB..Kingsley.2015.EHP.heat_related.ED.visits                              NA       4      NA
+AB.an.AB..Petitti.2016.EHP.allcause.mortality                                   0       0       1
+AB.p.AB..Petitti.2016.EHP.allcause.mortality                                    2      NA      NA
+AB.an.AB..Petitti.2016.EHP.heat_related.mortality                               9      NA      NA
+AB.p.AB..Petitti.2016.EHP.heat_related.mortality                                5      NA      NA
+AB.an.AB..Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality      NA      NA       0
+AB.p.AB..Petitti.2016.EHP.consequences.of.heat.and.dehydration.mortality       NA      NA       0
+AB.an.AB..Petitti.2016.EHP.heat_related.ED.visits                              NA      NA       0
+AB.p.AB..Petitti.2016.EHP.heat_related.ED.visits                               NA      NA       5
+
+Estimate deaths, ED visits, and PTBs and ratios of each by race group.
+```{r chunk-est-race,}
+for (city in fullcity) {
+  cy<-abbrcity[match(city,fullcity)]
+  demos<-importDemos(cy)
+  dat1<-death.counts.groups[city==cy,sum(popn)]
+  dat2<-fread(input=paste0(pa2,'AB_PowerOn_Present_YesHW_Control_',city,'.csv'))
+  dat2<-merge(dat2,demos[,c('PERSON_ID','raceGrp')],by='PERSON_ID')
+  dat3<-dat2[,sum(.SD,na.rm=T)/1e7,.SDcols=grep('heat.+ED.',names(dat2),value=T),by='raceGrp']
+  dat4<-dat2[,sum(ABe7an.meta.allcause.mortality,na.rm=T)/1e7,by='raceGrp']
+  dat5<-dat2[,.N,by='raceGrp']
+  dat6<-cbind(dat3,dat4[,-1],dat5[,-1])
+  names(dat6)<-c('raceGrp','AB.ED','AB.death','popn')
+  dat6[,c('EDrisk','deathRisk'):=lapply(.SD,FUN=function(x) {x/popn}),.SDcols=c('AB.ED','AB.death')]
+  print(dat6[order(raceGrp),c(1,2,3,4,5,6)])
+}
+```
+Old results:
+Atlanta:
+raceGrp AB.ED AB.death    popn    EDrisk        deathRisk
+1	35.8481146	0.865313186	773185	4.636421e-05	1.119154e-06
+2	28.0321588	1.343641105	1047885	2.675118e-05	1.282241e-06
+345	0.1552661	0.004907602	4095	3.791602e-05	1.198438e-06
+67	2.6607640	0.018716325	53930	4.933736e-05	3.470485e-07
+89	2.5647030	0.018570874	64855	3.954519e-05	2.863445e-07
+
+Detroit:
+raceGrp AB.ED   AB.death    popn    EDrisk        deathRisk
+67	0.9127338	  0.03778307	42965	  2.124366e-05	8.793918e-07
+2	  63.8924991	15.81780945	2858040	2.235536e-05	5.534495e-06
+89	2.9334358	  0.27289106	171635	1.709113e-05	1.589950e-06
+1	  8.0258331   1.74227409	408700	1.963747e-05	4.262966e-06
+345	0.2094099	  0.03784676	7695	  2.721376e-05	4.918357e-06
+
+Phoenix:
+raceGrp AB.ED   AB.death    popn    EDrisk        deathRisk
+1	  215.817607	7.62932608	5513775	3.914153e-05	1.383685e-06
+89	14.125073 	0.32087708	706365	1.999685e-05	4.542653e-07
+2	  9.469300  	0.40282734	428330	2.210749e-05	9.404602e-07
+345	2.438509  	0.06936114	126770	1.923569e-05	5.471416e-07
+67	11.271722 	0.14993337	214120	5.264208e-05	7.002306e-07
+
+New results:
+Atlanta:
+raceGrp AB.ED   AB.death    popn    EDrisk        deathRisk
+1	  69.3356024	0.8891630	773185	8.967531e-05	1.150000e-06
+2	  49.0727846	1.2533285	1047885	4.683031e-05	1.196055e-06
+67	5.0166996	  0.0189159	53930	  9.302243e-05	3.507491e-07
+89	4.5851929	  0.0176505	64855	  7.069914e-05	2.721533e-07
+345	0.2840952	  0.0045953	4095	  6.937612e-05	1.122173e-06
+
+
+Detroit:
+raceGrp AB.ED   AB.death    popn    EDrisk        deathRisk
+1	  16.0559549	1.7538978	  408700	3.928543e-05	4.291406e-06
+2	  129.8527592	15.7724473	2858040	4.543420e-05	5.518624e-06
+67	1.8343232	  0.0387510	  42965	  4.269343e-05	9.019202e-07
+89	5.8089720	  0.2698811	  171635	3.384492e-05	1.572413e-06
+345	0.4125712	  0.0389683	  7695	  5.361549e-05	5.064107e-06
+
+
+Phoenix:
+raceGrp AB.ED   AB.death    popn    EDrisk        deathRisk
+1	  2232.05366	8.0185702	5513775	0.0004048141	1.454280e-06
+2	  55.63143  	0.3020570	428330	0.0001298798	7.051969e-07
+67	123.10556	  0.1584707	214120	0.0005749372	7.401023e-07
+89	85.59516	  0.2441850	706365	0.0001211770	3.456924e-07
+345	14.60086	  0.0535426	126770	0.0001151760	4.223602e-07
+
+
+
+Estimate deaths, ED visits, and PTBs and ratios of each by AC vs non-AC.
+```{r chunk-est-AC}
+for (city in fullcity) {
+  cy<-abbrcity[match(city,fullcity)]
+  demos<-importDemos(cy)
+  dat1<-death.counts.groups[city==cy,sum(popn)]
+  dat2<-fread(input=paste0(pa2,'AB_PowerOn_Present_YesHW_Control_',city,'.csv'))
+  dat2<-merge(dat2,demos[,c('PERSON_ID','AC_STATUS')],by='PERSON_ID')
+  dat3<-dat2[,sum(.SD,na.rm=T)/1e7,.SDcols=grep('heat.+ED.',names(dat2),value=T),by='AC_STATUS']
+  dat4<-dat2[,sum(ABe7an.meta.allcause.mortality,na.rm=T)/1e7,by='AC_STATUS']
+  dat5<-dat2[,.N,by='AC_STATUS']
+  dat6<-cbind(dat3,dat4[,-1],dat5[,-1])
+  names(dat6)<-c('AC_STATUS','AB.ED','AB.death','popn')
+  dat6[,c('EDrisk','deathRisk'):=lapply(.SD,FUN=function(x) {x/popn}),.SDcols=c('AB.ED','AB.death')]
+  print(dat6[,c(1,2,3,4,5,6)])
+}
+```
+
+Old results:
+Atlanta:
+AC_STATUS AB_ED AB.death    popn    EDrisk       deathRisk
+FAC	67.3980347	2.16257870	1863615	3.616521e-05	1.160421e-06
+NAC	0.2755027	  0.01786844	14870 	1.852742e-05	1.201644e-06
+PAC	1.5874690	  0.07070195	65465 	2.424913e-05	1.079996e-06
+
+Detroit:
+AC_STATUS AB_ED AB.death    popn    EDrisk       deathRisk
+FAC	46.259235	10.389883	1897620	2.437750e-05	5.475218e-06
+PAC	20.477839	5.284070	1168060	1.753150e-05	4.523800e-06
+NAC	9.236838	2.234652	423355	2.181819e-05	5.278434e-06
+
+Phoenix:
+AC_STATUS AB_ED AB.death      popn    EDrisk         deathRisk
+FAC	252.9953868	8.5671300223	6976715	3.626282e-05	1.227960e-06
+PAC	0.10864256	0.0043293967	11085	  9.800862e-06	3.905635e-07
+NAC	0.01818152	0.0008655882	1560	  1.165482e-05	5.548642e-07
+
+New results:
+Atlanta:
+AC_STATUS AB.ED AB.death  popn    EDrisk        deathRisk
+FAC	125.2972993	2.1043099	1863615	6.723347e-05	1.129155e-06
+NAC	0.4585325	  0.0160589	14870	  3.083608e-05	1.079953e-06
+PAC	2.5385429	  0.0632844	65465	  3.877710e-05	9.666906e-07
+
+Detroit:
+AC_STATUS AB.ED AB.death  popn    EDrisk        deathRisk
+FAC	94.94007	10.477196	1897620	5.003113e-05	5.521230e-06
+PAC	40.30947	5.171672	1168060	3.450976e-05	4.427574e-06
+NAC	18.71504	2.225077	423355	4.420648e-05	5.255819e-06
+
+Phoenix:
+AC_STATUS AB.ED         AB.death  popn    EDrisk        deathRisk
+FAC	      2510.8023983	8.7719301	6976715	3.598832e-04	1.257315e-06
+PAC	      0.1512788	    0.0040400	11085	  1.364716e-05	3.644565e-07
+NAC	      0.0330001	    0.0008554	1560	  2.115391e-05	5.483333e-07
+
+These are counter-intuitive. Because we are allowing individuals adaptation to the MMT, individuals without AC do not show greater vulnerability than those with AC.
+
+Estimate deaths, ED visits, and PTBs and ratios of each by AC vs non-AC for PowerRestore. For Atlanta and Phoenix, these are in the expected direction for ED visits.
+```{r chunk-est-AC-restore}
+for (city in fullcity) {
+  cy<-abbrcity[match(city,fullcity)]
+  demos<-importDemos(cy)
+  dat1<-death.counts.groups[city==cy,sum(popn)]
+  dat2<-fread(input=paste0(pa2,'AB_PowerRestore_Present_YesHW_Control_',city,'.csv'))
+  dat2<-merge(dat2,demos[,c('PERSON_ID','AC_STATUS')],by='PERSON_ID')
+  dat3<-dat2[,sum(.SD,na.rm=T)/1e7,.SDcols=grep('heat.+ED.',names(dat2),value=T),by='AC_STATUS']
+  dat4<-dat2[,sum(ABe7an.meta.allcause.mortality,na.rm=T)/1e7,by='AC_STATUS']
+  dat5<-dat2[,.N,by='AC_STATUS']
+  dat6<-cbind(dat3,dat4[,-1],dat5[,-1])
+  names(dat6)<-c('AC_STATUS','AB.ED','AB.death','popn')
+  dat6[,c('EDrisk','deathRisk'):=lapply(.SD,FUN=function(x) {x/popn}),.SDcols=c('AB.ED','AB.death')]
+  print(dat6[,c(1,2,3,4,5,6)])
+}
+```
